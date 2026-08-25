@@ -1,0 +1,23 @@
+# The dsh-session-recall bundle patch, applied after every shipped bundle
+# layer (dsh-base, dsh-web-app) and before the user's own profile layer.
+#
+# 1. Turn the opt-in FTS index on and persist it on disk. The shipped web
+#    profile mounts `session-query-sqlite` with `openAt: never` and an
+#    in-memory database, so cross-session full-text search is off and any
+#    manually enabled index dies with the process. `openAt: first-search`
+#    keeps Node 22 startup output clean (the official web-app layer cites the
+#    same reason), and `dshHomePath` is the loader-provided `!!js` helper the
+#    official layers themselves use, so the index lands at
+#    `<DSH_HOME>/session-recall/index.db` whatever DSH_HOME resolves to.
+#    A profile that already pointed this row at its own persistent index can
+#    override either value in its own cordis.patch.yml, which composes later.
+# 2. Mount this plugin's model-facing `recall` tool. Requires the `tools`
+#    and `sessionQuery` services, which dsh-base already provides.
+- id: session-query-sqlite
+  config:
+    openAt: first-search
+    path: !!js dshHomePath('session-recall', 'index.db')
+
+- insert:
+    - id: session-recall
+      name: 'dsh-session-recall'
