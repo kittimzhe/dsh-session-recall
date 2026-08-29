@@ -91,6 +91,26 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 - 索引文件单进程独占（官方后端的单写者 SQLite 约束）。
 - 命中结果按原文照摘，**没有任何凭据或本地路径脱敏**——更早的会话里粘贴过的 token 或敏感路径可能被检索出来。目前只有默认 cwd 收窄与 `allowAllProjects: false` 两道闸；指纹识别/脱敏是后续增强。
 
+## 基准
+
+真机 headless profile 实测（Node 25，Apple Silicon，暖文件缓存）。
+
+| 语料 | |
+|---|---|
+| 会话数 | 31 |
+| 日志总事件 | 187,706（解压后约 104 MB，zstd 压缩后 49.7 MB） |
+| 已索引文本事件 | 8,187 |
+| FTS 索引体积 | 15 MB |
+
+| 查询 | 命中 | 暖查询耗时（FTS5 `MATCH`） |
+|---|---|---|
+| 英文 `font` | 100（上限） | 1.1 ms |
+| 英文 `resume template` | 46 | 0.6 ms |
+| 中文 `字体` | 29 | 0.3 ms |
+| 中文 `简历 模板` | 10 | 0.1 ms |
+
+暖查询（索引已在盘上）耗时 0.1～1.5 ms。冷启动首建：扫描 49.7 MB 日志约 4.7 s（解压 + 逐行扫描），把 8,187 条文本事件写入全新 FTS5 表约 190 ms；全新 profile 的首次 `recall` 在工具 10 s 超时内完成。此后重启复用持久化索引、增量 reconcile。
+
 ## 开发
 
 ```sh

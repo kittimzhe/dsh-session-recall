@@ -91,6 +91,26 @@ Every failure returns a friendly `hint` instead of a raw exception: a disabled i
 - One process must own the index file (single-writer SQLite, per the official backend).
 - Matches return transcript text verbatim — there is no credential or local-path redaction. A token or sensitive path pasted into an earlier session can be surfaced by a matching search. Default cwd scoping and `allowAllProjects: false` are the only containment; fingerprinting or redaction is future work.
 
+## Benchmark
+
+Measured on a real headless profile (Node 25, Apple Silicon, warm filesystem cache).
+
+| Corpus | |
+|---|---|
+| Sessions | 31 |
+| Events in the durable logs | 187,706 (~104 MB uncompressed, 49.7 MB zstd) |
+| Indexed text events | 8,187 |
+| FTS index on disk | 15 MB |
+
+| Query | Hits | Warm latency (FTS5 `MATCH`) |
+|---|---|---|
+| EN `font` | 100 (capped) | 1.1 ms |
+| EN `resume template` | 46 | 0.6 ms |
+| CN `字体` | 29 | 0.3 ms |
+| CN `简历 模板` | 10 | 0.1 ms |
+
+Warm searches run sub-millisecond to ~1.5 ms against the on-disk index. Cold start: scanning the 49.7 MB of session logs takes ~4.7 s (decompress + line scan) and inserting the 8,187 text events into a fresh FTS5 table takes ~190 ms; the first `recall` in a fresh profile completes within the tool's 10 s timeout. After that, restarts reuse the persisted index with incremental reconciliation.
+
 ## Development
 
 ```sh
