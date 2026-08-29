@@ -89,6 +89,7 @@ Every failure returns a friendly `hint` instead of a raw exception: a disabled i
 - First search after startup walks the durable logs to build the index (the tool description warns the model); subsequent searches are incremental.
 - `unicode61` matches whole tokens/phrases, not substrings — `AI` does not match `BRAID`. The zero-hit CJK hint mitigates the worst case; a substring fallback via `filterEvents()` is a possible v2.
 - One process must own the index file (single-writer SQLite, per the official backend).
+- Matches return transcript text verbatim — there is no credential or local-path redaction. A token or sensitive path pasted into an earlier session can be surfaced by a matching search. Default cwd scoping and `allowAllProjects: false` are the only containment; fingerprinting or redaction is future work.
 
 ## Development
 

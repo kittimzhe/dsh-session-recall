@@ -89,6 +89,7 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 - 启动后第一次搜索会扫全量日志建索引（工具描述里已警告模型）；之后增量更新。
 - `unicode61` 按完整 token/短语匹配，不支持子串——`AI` 匹配不到 `BRAID`。CJK 零命中提示缓解了最坏情况；基于 `filterEvents()` 的子串兜底是 v2 方向。
 - 索引文件单进程独占（官方后端的单写者 SQLite 约束）。
+- 命中结果按原文照摘，**没有任何凭据或本地路径脱敏**——更早的会话里粘贴过的 token 或敏感路径可能被检索出来。目前只有默认 cwd 收窄与 `allowAllProjects: false` 两道闸；指纹识别/脱敏是后续增强。
 
 ## 开发
 
