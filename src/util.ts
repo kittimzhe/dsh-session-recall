@@ -46,3 +46,19 @@ export function firstLineClipped(text: string, limit: number): string {
   }
   return out
 }
+
+/**
+ * Single-line snippet clipped around the first case-insensitive occurrence of
+ * `query`, with ellipses at either end when text was cut. Falls back to a
+ * head clip when the query is empty or absent.
+ */
+export function snippetAround(text: string, query: string, limit: number): string {
+  const flat = text.replaceAll(/\s+/g, ' ')
+  const q = normalizeQuery(query).toLowerCase()
+  const idx = q === '' ? -1 : flat.toLowerCase().indexOf(q)
+  if (idx < 0) return flat.slice(0, limit)
+  const pad = Math.floor(limit / 3)
+  const start = Math.max(0, idx - pad)
+  const end = Math.min(flat.length, start + limit)
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`
+}

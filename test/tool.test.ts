@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionEventSearchPage, SessionSearchHit, SessionSearchPage, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
+import type { SessionEventSearchDocument, SessionEventSearchPage, SessionRecord, SessionSearchHit, SessionSearchPage, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { createRecallTool, type RecallQueryEngine } from '../src/tool.ts'
@@ -11,6 +11,10 @@ interface FakeEngine extends RecallQueryEngine {
   eventsRequests: Array<Record<string, unknown>>
   titleCalls: string[][]
   titleError?: Error
+  listCalls: number
+  listResult: SessionRecord[]
+  filterCalls: string[]
+  filterResults: Map<string, SessionEventSearchDocument[]>
 }
 
 function hit(id: string, cwd: string | undefined, snippet: string, seq = 1): SessionSearchHit {
@@ -22,11 +26,23 @@ function hit(id: string, cwd: string | undefined, snippet: string, seq = 1): Ses
   } as unknown as SessionSearchHit
 }
 
+function record(id: string, cwd: string | undefined, createdAt = new Date(2026, 7, 20).getTime()): SessionRecord {
+  return { header: { version: 1, id, createdAt, ...(cwd != null ? { cwd } : {}) }, live: true, persisted: true } as unknown as SessionRecord
+}
+
+function doc(sessionId: string, text: string, seq = 3): SessionEventSearchDocument {
+  return { sessionId, seq, type: 'assistant/message', time: new Date(2026, 7, 20).getTime(), surface: 'current', text } as unknown as SessionEventSearchDocument
+}
+
 function makeEngine(page: Partial<SessionSearchPage<SessionSearchHit>> = {}, eventPage?: SessionEventSearchPage): FakeEngine {
   const engine: FakeEngine = {
     sessionsRequests: [],
     eventsRequests: [],
     titleCalls: [],
+    listCalls: 0,
+    listResult: [],
+    filterCalls: [],
+    filterResults: new Map(),
     async searchSessions(request) {
       engine.sessionsRequests.push(request as unknown as Record<string, unknown>)
       return { items: page.items ?? [], ...(page.nextCursor != null ? { nextCursor: page.nextCursor } : {}) } as SessionSearchPage<SessionSearchHit>
@@ -43,6 +59,14 @@ function makeEngine(page: Partial<SessionSearchPage<SessionSearchHit>> = {}, eve
         status: 'fulfilled',
         value: { session: {} as object, title: { title: `title of ${sessionId}`, eventSeq: 1, updatedAt: 0, messageSeqs: [], source: { kind: 'user' } } },
       })) as unknown as SessionTitleObservationResult[]
+    },
+    async listSessions() {
+      engine.listCalls += 1
+      return engine.listResult
+    },
+    async filterEvents(sessionId) {
+      engine.filterCalls.push(sessionId)
+      return engine.filterResults.get(sessionId) ?? []
     },
   }
   return engine
@@ -144,14 +168,76 @@ describe('recall execute — cross-session path', () => {
     expect(out.items[0]?.title).toBeNull()
   })
 
-  it('suggests the CJK keyword workaround on zero hits', async () => {
+  it('falls back to a zero-hit hint when no session contains the CJK substring', async () => {
     const engine = makeEngine({ items: [] })
     const out = await run(createRecallTool(undefined, engine), { query: '简历模板' }, '/proj')
-    expect(out.hint).toContain('unicode61')
+    expect(engine.listCalls).toBe(1)
+    expect(out.items).toEqual([])
+    expect(out.hint).toContain('no matches')
 
     const ascii = makeEngine({ items: [] })
     const out2 = await run(createRecallTool(undefined, ascii), { query: 'nothing here' }, '/proj')
     expect(out2.hint).toBeNull()
+    expect(ascii.listCalls).toBe(0)
+  })
+})
+
+describe('recall execute — CJK substring fallback', () => {
+  it('recovers cross-session CJK substring hits the full-text index missed', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('session-zh1', '/proj'), record('session-zh2', '/proj')]
+    engine.filterResults.set('session-zh2', [doc('session-zh2', '宋体字体很好看，就用它了')])
+    const out = await run(createRecallTool(undefined, engine), { query: '字体' }, '/proj')
+
+    expect(engine.filterCalls).toEqual(['session-zh1', 'session-zh2'])
+    expect(out.count).toBe(1)
+    expect(out.items[0]?.sessionId).toBe('session-zh2')
+    expect(out.items[0]?.bestMatch.snippet).toContain('字体')
+    expect(out.hint).toContain('substring scan')
+  })
+
+  it('respects cwd scope when scanning sessions', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('other-cwd', '/elsewhere'), record('here', '/proj')]
+    engine.filterResults.set('here', [doc('here', '字体文件已下载')])
+    const out = await run(createRecallTool(undefined, engine), { query: '字体' }, '/proj')
+    expect(engine.filterCalls).toEqual(['here'])
+    expect(out.items[0]?.sessionId).toBe('here')
+  })
+
+  it('scans every session when all_projects is allowed', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('other-cwd', '/elsewhere'), record('here', '/proj')]
+    engine.filterResults.set('other-cwd', [doc('other-cwd', '字体')])
+    const out = await run(createRecallTool(undefined, engine), { query: '字体', all_projects: true }, '/proj')
+    expect(engine.filterCalls).toEqual(['other-cwd', 'here'])
+    expect(out.items[0]?.sessionId).toBe('other-cwd')
+  })
+
+  it('sets no continuation cursor after a fallback page', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('s1', '/proj')]
+    engine.filterResults.set('s1', [doc('s1', '字体')])
+    const out = await run(createRecallTool(undefined, engine), { query: '字体' }, '/proj')
+    expect(out.hasMore).toBe(false)
+    expect(out.nextCursor).toBeNull()
+  })
+
+  it('skips the fallback when disabled but still hints', async () => {
+    const engine = makeEngine({ items: [] })
+    const out = await run(createRecallTool({ cjkFallback: false }, engine), { query: '字体' }, '/proj')
+    expect(engine.listCalls).toBe(0)
+    expect(out.hint).toContain('no matches')
+  })
+
+  it('recovers within-session CJK hits via filterEvents', async () => {
+    const engine = makeEngine({}, { items: [], session: { createdAt: 5, cwd: '/proj' } } as unknown as SessionEventSearchPage)
+    engine.filterResults.set('session-zh', [doc('session-zh', '字体已嵌入简历')])
+    const out = await run(createRecallTool(undefined, engine), { query: '字体', session_id: 'session-zh' }, '/proj')
+    expect(engine.filterCalls).toEqual(['session-zh'])
+    expect(out.count).toBe(1)
+    expect(out.items[0]?.bestMatch.snippet).toContain('字体')
+    expect(out.hint).toContain('substring scan')
   })
 })
 

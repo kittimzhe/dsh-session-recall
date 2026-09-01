@@ -33,7 +33,7 @@ recall({ query, session_id })            → 只搜指定会话内的事件
 recall({ query, limit, cursor })         → 翻页
 ```
 
-每条命中带会话 id、标题（尽力补全）、日期、命中摘录；结果在 Web UI 里渲染成原生搜索卡片（`SearchMatchesResultView`）。CJK 查询零命中时会给出分词提示：FTS 的 `unicode61` 分词器把连续中文当成一个 token，工具会教模型改用空格分隔的短关键词重试。
+每条命中带会话 id、标题（尽力补全）、日期、命中摘录；结果在 Web UI 里渲染成原生搜索卡片（`SearchMatchesResultView`）。因为 FTS 的 `unicode61` 分词器会把连续中文当成一个 token，短中文短语一旦嵌在长句里就匹配不到索引——所以 CJK 查询零命中时会自动回退到对会话文本的**精确子串扫描**（走 `sessionQuery.filterEvents` 的字面文本子句），hint 会说明这条回退路径是否命中。
 
 ## 授权边界（官方明确留给工具层的责任）
 
@@ -77,7 +77,9 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
     allowAllProjects: true  # 是否允许工具的 all_projects 参数
     defaultLimit: 5         # 模型省略 limit 时的页大小（1..10）
     maxLimit: 10            # 最大页大小（1..25）
-    cjkHint: true           # CJK 零命中的分词提示开关
+    cjkHint: true           # CJK 零命中的提示开关
+    cjkFallback: true       # CJK 零命中 → 对会话文本做精确子串扫描
+    cjkFallbackScanMax: 50  # 跨会话回退时最多扫描的会话数（1..500）
 ```
 
 ## 失败行为
@@ -87,7 +89,7 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 ## 已知限制
 
 - 启动后第一次搜索会扫全量日志建索引（工具描述里已警告模型）；之后增量更新。
-- `unicode61` 按完整 token/短语匹配，不支持子串——`AI` 匹配不到 `BRAID`。CJK 零命中提示缓解了最坏情况；基于 `filterEvents()` 的子串兜底是 v2 方向。
+- `unicode61` 按完整 token/短语匹配，不支持子串——`AI` 匹配不到 `BRAID`。CJK 查询零命中时会回退到精确子串扫描（`filterEvents`），hint 会说明是否命中；多词中文短语仍受"连续中文＝一个 token"的约束。
 - 索引文件单进程独占（官方后端的单写者 SQLite 约束）。
 - 命中结果按原文照摘，**没有任何凭据或本地路径脱敏**——更早的会话里粘贴过的 token 或敏感路径可能被检索出来。目前只有默认 cwd 收窄与 `allowAllProjects: false` 两道闸；指纹识别/脱敏是后续增强。
 

@@ -19,8 +19,8 @@ export type { RecallConfig, NormalizedRecallConfig } from './config.ts'
 export { normalizeRecallConfig } from './config.ts'
 export { createRecallTool, RECALL_TOOL_DESCRIPTION } from './tool.ts'
 export type { RecallQueryEngine } from './tool.ts'
-export { renderRecallText, recallContentBlocks, recallPresentationMeta, cjkZeroHitHint } from './render.ts'
-export { clamp, id8, formatDate, hasCJK, normalizeQuery, firstLineClipped } from './util.ts'
+export { renderRecallText, recallContentBlocks, recallPresentationMeta, cjkZeroHitHint, cjkFallbackHint } from './render.ts'
+export { clamp, id8, formatDate, hasCJK, normalizeQuery, firstLineClipped, snippetAround } from './util.ts'
 
 /** Plugin entry: mount the `recall` tool on the global tool registry. */
 export function apply(ctx: Context, config?: RecallConfig): void {

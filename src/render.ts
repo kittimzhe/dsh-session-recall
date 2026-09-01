@@ -63,11 +63,20 @@ export function recallPresentationMeta(result: RecallResult): JsonValue {
   } as JsonValue
 }
 
-/** The zero-hit CJK tokenizer hint, or `null` when not applicable. */
+/**
+ * Hint shown when the CJK substring fallback succeeded — explains why the
+ * full-text index missed the query and reports how many sessions matched.
+ */
+export function cjkFallbackHint(matched: number, enabled: boolean): string | null {
+  if (!enabled || matched <= 0) return null
+  return (
+    `full-text search returned no CJK hits (SQLite FTS5 tokenizer "unicode61" does not segment CJK), ` +
+    `so an exact substring scan over session text was used instead and matched ${matched} session(s).`
+  )
+}
+
+/** The zero-hit hint, shown only when both the full-text and substring paths miss. */
 export function cjkZeroHitHint(query: string, zeroHits: boolean, enabled: boolean): string | null {
   if (!enabled || !zeroHits || !hasCJK(query)) return null
-  return (
-    `no hits for a CJK query — the FTS unicode61 tokenizer indexes uninterrupted CJK runs as single tokens. ` +
-    `Retry with short space-separated keywords (e.g. "简历 模板" instead of "我的简历模板在这里"), or an English term.`
-  )
+  return `no matches for this CJK query. Try a shorter phrase, or an English/code term.`
 }

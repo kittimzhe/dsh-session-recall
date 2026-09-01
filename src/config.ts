@@ -6,8 +6,12 @@ export interface RecallConfig {
   defaultLimit?: number
   /** Largest accepted page size. Default `10`. */
   maxLimit?: number
-  /** Teach the model the CJK tokenizer workaround on zero hits. Default `true`. */
+  /** Explain CJK zero-hit results with a hint line. Default `true`. */
   cjkHint?: boolean
+  /** Fall back to an exact substring scan when a CJK query gets no full-text hits. Default `true`. */
+  cjkFallback?: boolean
+  /** Max sessions to scan on a cross-session CJK fallback. Default `50`. */
+  cjkFallbackScanMax?: number
 }
 
 /** Validated, fully defaulted configuration. */
@@ -16,10 +20,14 @@ export interface NormalizedRecallConfig {
   readonly defaultLimit: number
   readonly maxLimit: number
   readonly cjkHint: boolean
+  readonly cjkFallback: boolean
+  readonly cjkFallbackScanMax: number
 }
 
 export const RECALL_DEFAULT_LIMIT_MAX = 10
 export const RECALL_PAGE_LIMIT_MAX = 25
+export const RECALL_CJK_FALLBACK_SCAN_MAX_DEFAULT = 50
+export const RECALL_CJK_FALLBACK_SCAN_MAX_MAX = 500
 
 function intIn(value: number | undefined, fallback: number, lo: number, hi: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
@@ -34,5 +42,7 @@ export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallCo
     defaultLimit,
     maxLimit: Math.max(defaultLimit, intIn(config?.maxLimit, 10, 1, RECALL_PAGE_LIMIT_MAX)),
     cjkHint: config?.cjkHint !== false,
+    cjkFallback: config?.cjkFallback !== false,
+    cjkFallbackScanMax: intIn(config?.cjkFallbackScanMax, RECALL_CJK_FALLBACK_SCAN_MAX_DEFAULT, 1, RECALL_CJK_FALLBACK_SCAN_MAX_MAX),
   }
 }

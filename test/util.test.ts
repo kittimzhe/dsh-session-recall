@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clamp, firstLineClipped, formatDate, hasCJK, id8, normalizeQuery } from '../src/util.ts'
+import { clamp, firstLineClipped, formatDate, hasCJK, id8, normalizeQuery, snippetAround } from '../src/util.ts'
 
 describe('id8', () => {
   it('strips the web-profile session- prefix before slicing', () => {
@@ -65,5 +65,28 @@ describe('firstLineClipped', () => {
 
   it('returns empty for empty input', () => {
     expect(firstLineClipped('', 10)).toBe('')
+  })
+})
+
+describe('snippetAround', () => {
+  it('clips a window around the first CJK match and marks the cut with an ellipsis', () => {
+    const s = snippetAround('宋体字体很好看，就用它了', '字体', 8)
+    expect(s).toContain('字体')
+    expect(s.endsWith('…')).toBe(true)
+  })
+
+  it('adds a leading ellipsis when the match is deep into the text', () => {
+    const s = snippetAround('一二三四五六七八九十字体很好', '字体', 8)
+    expect(s.startsWith('…')).toBe(true)
+    expect(s).toContain('字体')
+  })
+
+  it('is case-insensitive and flattens whitespace', () => {
+    expect(snippetAround('abc\nDEF ghi', 'def', 20)).toBe('abc DEF ghi')
+  })
+
+  it('falls back to a head clip when the query is absent', () => {
+    expect(snippetAround('long text with no match', 'zzz', 8)).toBe('long tex')
+    expect(snippetAround('abc', '', 8)).toBe('abc')
   })
 })

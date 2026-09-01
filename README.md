@@ -33,7 +33,7 @@ recall({ query, session_id })            → search the events of one session
 recall({ query, limit, cursor })         → page through results
 ```
 
-Each hit carries the session id, title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Zero-hit CJK queries get a tokenizer hint: the FTS `unicode61` tokenizer indexes uninterrupted CJK runs as single tokens, so the tool teaches the model to retry with short space-separated keywords.
+Each hit carries the session id, title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Because the FTS `unicode61` tokenizer indexes an uninterrupted CJK run as a single token, a short Chinese phrase inside a longer sentence would otherwise never match the index — so a zero-hit CJK query automatically falls back to an exact substring scan over session text (the `sessionQuery.filterEvents` literal text clause), and the hint reports when that path matched.
 
 ## Scoping (the authorization gap)
 
@@ -77,7 +77,9 @@ Plugin row config (all optional):
     allowAllProjects: true  # honor the tool's all_projects argument
     defaultLimit: 5         # page size when the model omits limit (1..10)
     maxLimit: 10            # largest accepted page size (1..25)
-    cjkHint: true           # zero-hit CJK tokenizer workaround hint
+    cjkHint: true           # explain CJK zero-hit results
+    cjkFallback: true       # CJK zero-hit → exact substring scan over session text
+    cjkFallbackScanMax: 50  # max sessions scanned per cross-session fallback (1..500)
 ```
 
 ## Failure behavior
@@ -87,7 +89,7 @@ Every failure returns a friendly `hint` instead of a raw exception: a disabled i
 ## Known limitations
 
 - First search after startup walks the durable logs to build the index (the tool description warns the model); subsequent searches are incremental.
-- `unicode61` matches whole tokens/phrases, not substrings — `AI` does not match `BRAID`. The zero-hit CJK hint mitigates the worst case; a substring fallback via `filterEvents()` is a possible v2.
+- `unicode61` matches whole tokens/phrases, not substrings — `AI` does not match `BRAID`. CJK queries that get zero full-text hits fall back to an exact substring scan (`filterEvents`), and the hint reports when that path matched; a multi-word CJK phrase still has to survive the tokenizer's whole-run indexing.
 - One process must own the index file (single-writer SQLite, per the official backend).
 - Matches return transcript text verbatim — there is no credential or local-path redaction. A token or sensitive path pasted into an earlier session can be surfaced by a matching search. Default cwd scoping and `allowAllProjects: false` are the only containment; fingerprinting or redaction is future work.
 

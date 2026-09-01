@@ -13,8 +13,11 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { SearchMatchesResultView, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type {
+  SessionEventResultFilter,
+  SessionEventSearchDocument,
   SessionEventSearchPage,
   SessionEventSearchRequest,
+  SessionRecord,
   SessionSearchCursor,
   SessionSearchExecContext,
   SessionSearchHit,
@@ -23,24 +26,26 @@ import type {
   SessionTitleObservationResult,
 } from '@deepseek-ai/dsh-session-query'
 import { SessionSearchCursor as brandCursor } from '@deepseek-ai/dsh-session-query'
-import { SessionId as brandSessionId } from '@deepseek-ai/dsh-session'
+import { SessionId as brandSessionId, type SessionId } from '@deepseek-ai/dsh-session'
 import type { NormalizedRecallConfig, RecallConfig } from './config.ts'
 import { normalizeRecallConfig } from './config.ts'
-import { cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
+import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
 import type { RecallArgs, RecallItem, RecallResult } from './types.ts'
-import { clamp, id8, normalizeQuery } from './util.ts'
+import { clamp, hasCJK, id8, normalizeQuery, snippetAround } from './util.ts'
 
 /** The ctx.sessionQuery surface this tool consumes (structural, for testability). */
 export interface RecallQueryEngine {
   searchSessions(request: SessionSearchRequest, exec?: SessionSearchExecContext): Promise<SessionSearchPage<SessionSearchHit>>
   searchEvents(request: SessionEventSearchRequest, exec?: SessionSearchExecContext): Promise<SessionEventSearchPage>
   readTitleSnapshots(sessionIds: readonly string[], signal?: AbortSignal): Promise<SessionTitleObservationResult[]>
+  listSessions(signal?: AbortSignal): Promise<SessionRecord[]>
+  filterEvents(sessionId: SessionId, filters: readonly SessionEventResultFilter[]): Promise<SessionEventSearchDocument[]>
 }
 
 export const RECALL_TOOL_DESCRIPTION = [
   'Search the FULL TEXT of past and current session transcripts on this machine (your own conversation history with this user).',
   'Use it when the user refers to earlier work ("that bug we fixed last week", "the font we chose for my resume") or when prior context was compacted away.',
-  'Matches whole words/phrases (English and code identifiers work best); returns the best-matching event snippet per session plus the session id.',
+  'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to an exact substring scan. Returns the best-matching event snippet per session plus the session id.',
   'Then use the read tool on files, or ask the user, to go deeper — this tool only points at history, it does not resume sessions.',
   'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere.',
   'The first search after startup may be slow while the index builds.',
@@ -138,6 +143,50 @@ function eventItems(page: SessionEventSearchPage, sessionId: string): RecallItem
   }))
 }
 
+/** Snippet window kept consistent with the tool's text projection. */
+const CJK_SNIPPET_CHARS = 120
+
+/**
+ * CJK substring-scan fallback for zero-hit full-text searches. SQLite FTS5's
+ * `unicode61` tokenizer treats an uninterrupted CJK run as one token, so a
+ * short Chinese phrase inside a longer sentence never matches the index. The
+ * official sessionQuery service's `filterEvents` text clause is a literal
+ * Unicode/case-insensitive regex scan that is deliberately independent of FTS
+ * providers, so scanning each scoped session with it recovers the exact
+ * substring matches the full-text index cannot see.
+ */
+async function cjkScanSessions(
+  engine: RecallQueryEngine,
+  query: string,
+  agentCwd: string | null,
+  wantAll: boolean,
+  scanMax: number,
+  limit: number,
+  signal: AbortSignal | undefined,
+): Promise<RecallItem[]> {
+  const all = await engine.listSessions(signal)
+  const candidates = !wantAll && agentCwd != null ? all.filter((record) => record.header.cwd === agentCwd) : all
+  const items: RecallItem[] = []
+  for (const record of candidates.slice(0, scanMax)) {
+    if (items.length >= limit) break
+    const docs = await engine.filterEvents(record.header.id, [{ kind: 'text', text: query }])
+    if (docs.length === 0) continue
+    const doc = docs[0]
+    if (doc === undefined) continue
+    items.push({
+      sessionId: record.header.id,
+      id8: id8(record.header.id),
+      title: null,
+      createdAt: record.header.createdAt,
+      cwd: record.header.cwd ?? null,
+      live: record.live,
+      persisted: record.persisted,
+      bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, query, CJK_SNIPPET_CHARS) },
+    })
+  }
+  return items
+}
+
 const nullableString = { oneOf: [{ type: 'string' }, { type: 'null' }] } as const
 
 const recallOutputSchema = {
@@ -218,8 +267,27 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
             { sessionId, query, limit, cursor: brand(args.cursor) },
             { signal: exec.signal },
           )
-          const items = eventItems(page, sessionId)
-          return { query, scope, count: items.length, hasMore: page.nextCursor != null, items, nextCursor: page.nextCursor ?? null, hint: cjkZeroHitHint(query, items.length === 0, cfg.cjkHint) }
+          let items = eventItems(page, sessionId)
+          let hint: string | null = null
+          if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
+            const docs = await engine.filterEvents(sessionId, [{ kind: 'text', text: query }])
+            if (docs.length > 0) {
+              items = docs.slice(0, limit).map((doc) => ({
+                sessionId,
+                id8: id8(sessionId),
+                title: null,
+                createdAt: page.session.createdAt,
+                cwd: page.session.cwd ?? null,
+                live: true,
+                persisted: false,
+                bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, query, CJK_SNIPPET_CHARS) },
+              }))
+            }
+            hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)
+          } else if (items.length === 0) {
+            hint = cjkZeroHitHint(query, true, cfg.cjkHint)
+          }
+          return { query, scope, count: items.length, hasMore: page.nextCursor != null, items, nextCursor: page.nextCursor ?? null, hint }
         }
 
         const request: SessionSearchRequest = { query, limit }
@@ -227,8 +295,27 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
         if (args.cursor != null && args.cursor !== '') request.cursor = brand(args.cursor)
         const page = await engine.searchSessions(request, { signal: exec.signal })
         const titles = await titlesFor(engine, page.items.map((hit) => hit.header.id), exec.signal)
-        const items = toItems(page.items, titles)
-        return { query, scope, count: items.length, hasMore: page.nextCursor != null, items, nextCursor: page.nextCursor ?? null, hint: cjkZeroHitHint(query, items.length === 0, cfg.cjkHint) }
+        let items = toItems(page.items, titles)
+        let hint: string | null = null
+        let fallbackRan = false
+        if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
+          fallbackRan = true
+          const scanned = await cjkScanSessions(engine, query, agentCwd, wantAll, cfg.cjkFallbackScanMax, limit, exec.signal)
+          const scanTitles = await titlesFor(engine, scanned.map((item) => item.sessionId), exec.signal)
+          items = scanned.map((item) => ({ ...item, title: scanTitles.get(item.sessionId) ?? null }))
+          hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)
+        } else if (items.length === 0) {
+          hint = cjkZeroHitHint(query, true, cfg.cjkHint)
+        }
+        return {
+          query,
+          scope,
+          count: items.length,
+          hasMore: !fallbackRan && page.nextCursor != null,
+          items,
+          nextCursor: !fallbackRan ? (page.nextCursor ?? null) : null,
+          hint,
+        }
       } catch (error) {
         return recallError(query, error)
       }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cjkZeroHitHint, recallContentBlocks, recallPresentationMeta, renderRecallText } from '../src/render.ts'
+import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta, renderRecallText } from '../src/render.ts'
 import type { RecallResult } from '../src/types.ts'
 
 function result(overwrites: Partial<RecallResult> = {}): RecallResult {
@@ -93,9 +93,18 @@ describe('recallPresentationMeta', () => {
 
 describe('cjkZeroHitHint', () => {
   it('fires only on zero hits with CJK present and enabled', () => {
-    expect(cjkZeroHitHint('简历模板', true, true)).toContain('unicode61')
+    expect(cjkZeroHitHint('简历模板', true, true)).toContain('no matches')
     expect(cjkZeroHitHint('简历模板', false, true)).toBeNull()
     expect(cjkZeroHitHint('简历模板', true, false)).toBeNull()
     expect(cjkZeroHitHint('resume', true, true)).toBeNull()
+  })
+})
+
+describe('cjkFallbackHint', () => {
+  it('fires only when the substring fallback actually matched sessions', () => {
+    expect(cjkFallbackHint(3, true)).toContain('substring scan')
+    expect(cjkFallbackHint(3, true)).toContain('3 session')
+    expect(cjkFallbackHint(0, true)).toBeNull()
+    expect(cjkFallbackHint(3, false)).toBeNull()
   })
 })
