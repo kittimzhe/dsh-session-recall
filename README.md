@@ -33,7 +33,7 @@ recall({ query, session_id })            → search the events of one session
 recall({ query, limit, cursor })         → page through results
 ```
 
-Each hit carries the session id, title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Because the FTS `unicode61` tokenizer indexes an uninterrupted CJK run as a single token, a short Chinese phrase inside a longer sentence would otherwise never match the index — so a zero-hit CJK query automatically falls back to an exact substring scan over session text (the `sessionQuery.filterEvents` literal text clause), and the hint reports when that path matched.
+Each hit carries the session id, title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Because the FTS `unicode61` tokenizer indexes an uninterrupted CJK run as a single token, a short Chinese phrase inside a longer sentence would otherwise never match the index — so a zero-hit CJK query automatically falls back to a substring scan over session text (the `sessionQuery.filterEvents` literal text clause). Every whitespace-separated term must match, so `简历 模板` still recovers `简历模板`; the hint reports when that path matched.
 
 ## Scoping (the authorization gap)
 
@@ -89,7 +89,7 @@ Every failure returns a friendly `hint` instead of a raw exception: a disabled i
 ## Known limitations
 
 - First search after startup walks the durable logs to build the index (the tool description warns the model); subsequent searches are incremental.
-- `unicode61` matches whole tokens/phrases, not substrings — `AI` does not match `BRAID`. CJK queries that get zero full-text hits fall back to an exact substring scan (`filterEvents`), and the hint reports when that path matched; a multi-word CJK phrase still has to survive the tokenizer's whole-run indexing.
+- `unicode61` matches whole tokens/phrases, not substrings — `AI` does not match `BRAID`. CJK queries that get zero full-text hits fall back to a substring scan (`filterEvents`) whose whitespace-separated terms are ANDed, so `简历 模板` also recovers `简历模板`; the hint reports when that path matched.
 - One process must own the index file (single-writer SQLite, per the official backend).
 - Matches return transcript text verbatim — there is no credential or local-path redaction. A token or sensitive path pasted into an earlier session can be surfaced by a matching search. Default cwd scoping and `allowAllProjects: false` are the only containment; fingerprinting or redaction is future work.
 

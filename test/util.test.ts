@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clamp, firstLineClipped, formatDate, hasCJK, id8, normalizeQuery, snippetAround } from '../src/util.ts'
+import { clamp, firstLineClipped, formatDate, hasCJK, id8, normalizeQuery, snippetAround, splitTerms } from '../src/util.ts'
 
 describe('id8', () => {
   it('strips the web-profile session- prefix before slicing', () => {
@@ -40,6 +40,21 @@ describe('normalizeQuery', () => {
 
   it('leaves clean queries untouched', () => {
     expect(normalizeQuery('resume template')).toBe('resume template')
+  })
+})
+
+describe('splitTerms', () => {
+  it('splits on whitespace and drops empty pieces', () => {
+    expect(splitTerms('简历 模板')).toEqual(['简历', '模板'])
+    expect(splitTerms('  a  b   c ')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('returns a single term for unspaced input', () => {
+    expect(splitTerms('简历模板')).toEqual(['简历模板'])
+  })
+
+  it('returns an empty list for whitespace-only input', () => {
+    expect(splitTerms('   \n ')).toEqual([])
   })
 })
 

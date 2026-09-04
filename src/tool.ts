@@ -31,7 +31,7 @@ import type { NormalizedRecallConfig, RecallConfig } from './config.ts'
 import { normalizeRecallConfig } from './config.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
 import type { RecallArgs, RecallItem, RecallResult } from './types.ts'
-import { clamp, hasCJK, id8, normalizeQuery, snippetAround } from './util.ts'
+import { clamp, hasCJK, id8, normalizeQuery, snippetAround, splitTerms } from './util.ts'
 
 /** The ctx.sessionQuery surface this tool consumes (structural, for testability). */
 export interface RecallQueryEngine {
@@ -45,7 +45,7 @@ export interface RecallQueryEngine {
 export const RECALL_TOOL_DESCRIPTION = [
   'Search the FULL TEXT of past and current session transcripts on this machine (your own conversation history with this user).',
   'Use it when the user refers to earlier work ("that bug we fixed last week", "the font we chose for my resume") or when prior context was compacted away.',
-  'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to an exact substring scan. Returns the best-matching event snippet per session plus the session id.',
+  'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to a substring scan in which every whitespace-separated term must match. Returns the best-matching event snippet per session plus the session id.',
   'Then use the read tool on files, or ask the user, to go deeper — this tool only points at history, it does not resume sessions.',
   'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere.',
   'The first search after startup may be slow while the index builds.',
@@ -147,6 +147,18 @@ function eventItems(page: SessionEventSearchPage, sessionId: string): RecallItem
 const CJK_SNIPPET_CHARS = 120
 
 /**
+ * Decompose a query into ANDed literal-text clauses. A space-separated CJK
+ * query like "简历 模板" must match each term as a substring (so it recovers
+ * "简历模板"), not a whitespace-joined literal (which would require the space
+ * to be present verbatim). `highlight` is the first term, guaranteed present
+ * whenever the ANDed scan matches.
+ */
+function cjkTextFilters(query: string): { filters: Array<{ kind: 'text'; text: string }>; highlight: string } {
+  const terms = splitTerms(query)
+  return { filters: terms.map((term) => ({ kind: 'text', text: term })), highlight: terms[0] ?? query }
+}
+
+/**
  * CJK substring-scan fallback for zero-hit full-text searches. SQLite FTS5's
  * `unicode61` tokenizer treats an uninterrupted CJK run as one token, so a
  * short Chinese phrase inside a longer sentence never matches the index. The
@@ -169,7 +181,8 @@ async function cjkScanSessions(
   const items: RecallItem[] = []
   for (const record of candidates.slice(0, scanMax)) {
     if (items.length >= limit) break
-    const docs = await engine.filterEvents(record.header.id, [{ kind: 'text', text: query }])
+    const { filters, highlight } = cjkTextFilters(query)
+    const docs = await engine.filterEvents(record.header.id, filters)
     if (docs.length === 0) continue
     const doc = docs[0]
     if (doc === undefined) continue
@@ -181,7 +194,7 @@ async function cjkScanSessions(
       cwd: record.header.cwd ?? null,
       live: record.live,
       persisted: record.persisted,
-      bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, query, CJK_SNIPPET_CHARS) },
+      bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
     })
   }
   return items
@@ -270,7 +283,8 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
           let items = eventItems(page, sessionId)
           let hint: string | null = null
           if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
-            const docs = await engine.filterEvents(sessionId, [{ kind: 'text', text: query }])
+            const { filters, highlight } = cjkTextFilters(query)
+            const docs = await engine.filterEvents(sessionId, filters)
             if (docs.length > 0) {
               items = docs.slice(0, limit).map((doc) => ({
                 sessionId,
@@ -280,7 +294,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
                 cwd: page.session.cwd ?? null,
                 live: true,
                 persisted: false,
-                bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, query, CJK_SNIPPET_CHARS) },
+                bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
               }))
             }
             hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)

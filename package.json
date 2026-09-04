@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-recall",
   "description": "Cross-session full-text recall for DeepSeek Harness: the model-facing `recall` tool searches past session transcripts through ctx.sessionQuery",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publishConfig": {
     "access": "public"
   },

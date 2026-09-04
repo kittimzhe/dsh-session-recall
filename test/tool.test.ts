@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionEventSearchDocument, SessionEventSearchPage, SessionRecord, SessionSearchHit, SessionSearchPage, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
+import type { SessionEventResultFilter, SessionEventSearchDocument, SessionEventSearchPage, SessionRecord, SessionSearchHit, SessionSearchPage, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { createRecallTool, type RecallQueryEngine } from '../src/tool.ts'
@@ -14,6 +14,7 @@ interface FakeEngine extends RecallQueryEngine {
   listCalls: number
   listResult: SessionRecord[]
   filterCalls: string[]
+  filterArgs: Array<readonly SessionEventResultFilter[]>
   filterResults: Map<string, SessionEventSearchDocument[]>
 }
 
@@ -42,6 +43,7 @@ function makeEngine(page: Partial<SessionSearchPage<SessionSearchHit>> = {}, eve
     listCalls: 0,
     listResult: [],
     filterCalls: [],
+    filterArgs: [],
     filterResults: new Map(),
     async searchSessions(request) {
       engine.sessionsRequests.push(request as unknown as Record<string, unknown>)
@@ -64,8 +66,9 @@ function makeEngine(page: Partial<SessionSearchPage<SessionSearchHit>> = {}, eve
       engine.listCalls += 1
       return engine.listResult
     },
-    async filterEvents(sessionId) {
+    async filterEvents(sessionId, filters) {
       engine.filterCalls.push(sessionId)
+      engine.filterArgs.push(filters)
       return engine.filterResults.get(sessionId) ?? []
     },
   }
@@ -196,6 +199,18 @@ describe('recall execute — CJK substring fallback', () => {
     expect(out.hint).toContain('substring scan')
   })
 
+  it('recovers a space-separated multi-word CJK query by ANDing each term as a substring', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('session-zh', '/proj')]
+    engine.filterResults.set('session-zh', [doc('session-zh', '正在调简历模板的字体间距')])
+    const out = await run(createRecallTool(undefined, engine), { query: '简历 模板' }, '/proj')
+
+    expect(engine.filterArgs[0]).toEqual([{ kind: 'text', text: '简历' }, { kind: 'text', text: '模板' }])
+    expect(out.count).toBe(1)
+    expect(out.items[0]?.sessionId).toBe('session-zh')
+    expect(out.items[0]?.bestMatch.snippet).toContain('简历')
+  })
+
   it('respects cwd scope when scanning sessions', async () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('other-cwd', '/elsewhere'), record('here', '/proj')]
@@ -238,6 +253,15 @@ describe('recall execute — CJK substring fallback', () => {
     expect(out.count).toBe(1)
     expect(out.items[0]?.bestMatch.snippet).toContain('字体')
     expect(out.hint).toContain('substring scan')
+  })
+
+  it('recovers a multi-word CJK query within one session', async () => {
+    const engine = makeEngine({}, { items: [], session: { createdAt: 5, cwd: '/proj' } } as unknown as SessionEventSearchPage)
+    engine.filterResults.set('session-zh', [doc('session-zh', '深度学习框架的选择')])
+    const out = await run(createRecallTool(undefined, engine), { query: '深度学习 框架', session_id: 'session-zh' }, '/proj')
+    expect(engine.filterArgs[0]).toEqual([{ kind: 'text', text: '深度学习' }, { kind: 'text', text: '框架' }])
+    expect(out.count).toBe(1)
+    expect(out.items[0]?.bestMatch.snippet).toContain('深度学习')
   })
 })
 

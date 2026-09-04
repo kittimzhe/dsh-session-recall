@@ -34,6 +34,11 @@ export function normalizeQuery(text: string): string {
   return text.trim().replaceAll(/\s+/g, ' ')
 }
 
+/** Split into whitespace-separated terms, dropping empty pieces. */
+export function splitTerms(text: string): string[] {
+  return text.split(/\s+/u).filter((term) => term.length > 0)
+}
+
 /** First line of `text` with control characters stripped, clipped to `limit` code points. */
 export function firstLineClipped(text: string, limit: number): string {
   const line = text.split('\n', 1)[0] ?? ''
