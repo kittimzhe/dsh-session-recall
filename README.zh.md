@@ -1,8 +1,8 @@
 # dsh-session-recall
 
-[English](README.md) | 中文
+[English](https://github.com/kittimzhe/dsh-session-recall/blob/main/README.md) | 中文
 
-[![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
 
 DeepSeek Harness 的**确定性跨会话全文检索**插件：注册模型可调用的 `recall` 工具，让 agent 能**检索自己过往的会话原文**——"上周修的那个 bug"、"简历选的什么字体"——全部通过可信的 `ctx.sessionQuery` 缝完成。
 
@@ -162,4 +162,4 @@ npm run bundle      # tsdown → lib/
 
 ## 许可
 
-[MIT](LICENSE)
+[MIT](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)

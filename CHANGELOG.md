@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — 2026-09-13
+
+- Fix dead relative links on the npm readme: language switch and LICENSE links now point at absolute GitHub URLs.
+
 ## 0.4.0 — 2026-09-13
 
 Scope policy + redaction: the retrieval layer gets the same deployment controls an evidence tool needs.
