@@ -1,4 +1,11 @@
 /** Plugin-row configuration for dsh-session-recall. */
+import { normalizeRedactionMode, type RedactionMode } from './redact.ts'
+
+/** What happens when the model passes `all_projects=true`. */
+export type AllProjectsPolicy = 'allow' | 'deny' | 'confirm'
+
+export const ALL_PROJECTS_POLICIES: readonly AllProjectsPolicy[] = ['allow', 'deny', 'confirm']
+
 export interface RecallConfig {
   /** Honor the tool's `all_projects` argument. Default `true`. */
   allowAllProjects?: boolean
@@ -12,6 +19,18 @@ export interface RecallConfig {
   cjkFallback?: boolean
   /** Max sessions to scan on a cross-session CJK fallback. Default `50`. */
   cjkFallbackScanMax?: number
+  /** Redact secret-looking text in snippets and titles. Default `'off'`. */
+  redactionMode?: RedactionMode
+  /** When non-empty, only sessions started in these project directories are searchable. Default: no restriction. */
+  cwdAllowlist?: readonly string[]
+  /** Sessions started in these project directories are never searchable. Default: none. */
+  cwdDenylist?: readonly string[]
+  /**
+   * `all_projects` gate: `'allow'` (default, previous behavior), `'deny'`
+   * (ignored, with a model-facing hint), or `'confirm'` (the user must
+   * approve through the `@deepseek-ai/dsh-user-approval` seam; fail-closed).
+   */
+  allProjectsPolicy?: AllProjectsPolicy
 }
 
 /** Validated, fully defaulted configuration. */
@@ -22,6 +41,10 @@ export interface NormalizedRecallConfig {
   readonly cjkHint: boolean
   readonly cjkFallback: boolean
   readonly cjkFallbackScanMax: number
+  readonly redactionMode: RedactionMode
+  readonly cwdAllowlist: readonly string[]
+  readonly cwdDenylist: readonly string[]
+  readonly allProjectsPolicy: AllProjectsPolicy
 }
 
 export const RECALL_DEFAULT_LIMIT_MAX = 10
@@ -34,6 +57,16 @@ function intIn(value: number | undefined, fallback: number, lo: number, hi: numb
   return Math.min(hi, Math.max(lo, Math.trunc(value)))
 }
 
+function stringList(value: readonly string[] | undefined): readonly string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0) : []
+}
+
+function normalizePolicy(value: AllProjectsPolicy | undefined): AllProjectsPolicy {
+  return typeof value === 'string' && (ALL_PROJECTS_POLICIES as readonly string[]).includes(value)
+    ? value
+    : 'allow'
+}
+
 /** Default, clamp, and cross-check every optional field. */
 export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallConfig {
   const defaultLimit = intIn(config?.defaultLimit, 5, 1, RECALL_DEFAULT_LIMIT_MAX)
@@ -44,5 +77,20 @@ export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallCo
     cjkHint: config?.cjkHint !== false,
     cjkFallback: config?.cjkFallback !== false,
     cjkFallbackScanMax: intIn(config?.cjkFallbackScanMax, RECALL_CJK_FALLBACK_SCAN_MAX_DEFAULT, 1, RECALL_CJK_FALLBACK_SCAN_MAX_MAX),
+    redactionMode: normalizeRedactionMode(config?.redactionMode),
+    cwdAllowlist: stringList(config?.cwdAllowlist),
+    cwdDenylist: stringList(config?.cwdDenylist),
+    allProjectsPolicy: normalizePolicy(config?.allProjectsPolicy),
   }
+}
+
+/** Whether a session cwd is searchable under the allowlist/denylist policy. */
+export function cwdAllowed(cwd: string | null | undefined, cfg: NormalizedRecallConfig): boolean {
+  if (cwd == null || cwd === '') {
+    // Unknown cwd: not denylisted, but an explicit allowlist does not cover it either.
+    return cfg.cwdAllowlist.length === 0
+  }
+  if (cfg.cwdDenylist.includes(cwd)) return false
+  if (cfg.cwdAllowlist.length > 0 && !cfg.cwdAllowlist.includes(cwd)) return false
+  return true
 }

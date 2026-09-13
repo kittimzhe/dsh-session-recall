@@ -4,7 +4,32 @@ English | [中文](README.zh.md)
 
 [![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Cross-session full-text recall for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): the model-facing `recall` tool lets the agent **search its own past session transcripts** — "that bug we fixed last week", "the font we chose for my resume" — through the trusted `ctx.sessionQuery` seam.
+Deterministic cross-session full-text retrieval for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): the model-facing `recall` tool lets the agent **search its own past session transcripts** — "that bug we fixed last week", "the font we chose for my resume" — through the trusted `ctx.sessionQuery` seam.
+
+## Positioning
+
+`dsh-session-recall` is a **transcript retrieval layer** focused on correctness and control.
+
+- It returns evidence from original session logs, not synthesized summaries.
+- It enforces explicit retrieval scope (cwd by default, opt-in widening).
+- It favors deterministic behavior over "smart" but lossy memory extraction.
+
+If you need agent memory orchestration, use a memory framework; if you need bounded, auditable lookup over historical transcripts, use this plugin.
+
+## Competitive context
+
+| Capability focus | Memory frameworks | Generic transcript search | `dsh-session-recall` |
+|---|---|---|---|
+| Retrieval target | Derived memory objects | Varies by implementation | **Original session transcript events** |
+| Scope control | Framework-specific | Often coarse | **cwd-scoped default + explicit `all_projects` gate** |
+| CJK behavior | Framework-specific | Often tokenizer-limited | **FTS + CJK zero-hit substring fallback** |
+| Output contract | Usually framework-native | Varies | **Typed `recall` result with stable fields/hints** |
+
+## Roadmap
+
+- **P1: ranking controls** — configurable recency decay and session pinning on top of FTS relevance.
+- **P1: query diagnostics** — expose match reason (fts/cjk-fallback/filters) and scan budget in result metadata.
+- **P2: evidence handoff** — one-click bridge to session export for matched sessions.
 
 ## Why
 
@@ -85,6 +110,19 @@ Plugin row config (all optional):
 ## Failure behavior
 
 Every failure returns a friendly `hint` instead of a raw exception: a disabled index explains the two config keys needed, a stale cursor tells the model to restart without one, an unknown `session_id` suggests discovering sessions first. Title enrichment is best-effort — a failed title batch degrades to untitled rows, never a failed search.
+
+## Scope policy & redaction (v0.4)
+
+Deployment-level controls for what the model may read back:
+
+| Option | Values | Default | Effect |
+|---|---|---|---|
+| `redactionMode` | `off` / `mask` / `hash` | `off` | Redact secret-looking text (bearer headers, prefixed API keys, private-key blocks, emails) in snippets and titles. `hash` keeps secrets comparable (`#xxxxxxxx`, same secret → same marker) without being readable. Results carry a `redacted` count. |
+| `cwdAllowlist` | list of paths | (none) | Only sessions started in these directories are searchable; the calling cwd itself must be listed. |
+| `cwdDenylist` | list of paths | (none) | These directories are never searchable. Deny wins over allow. |
+| `allProjectsPolicy` | `allow` / `deny` / `confirm` | `allow` | `deny` ignores `all_projects` with a model-facing hint; `confirm` asks the user through the official `@deepseek-ai/dsh-user-approval` seam — fail-closed when no answerer is composed. |
+
+All three gates apply uniformly to cross-session hits, the CJK fallback scan, and `session_id` reads — no bypass route.
 
 ## Known limitations
 

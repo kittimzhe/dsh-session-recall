@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeRecallConfig } from '../src/config.ts'
+import { cwdAllowed, normalizeRecallConfig } from '../src/config.ts'
 
 describe('normalizeRecallConfig', () => {
   it('defaults everything', () => {
@@ -10,6 +10,10 @@ describe('normalizeRecallConfig', () => {
       cjkHint: true,
       cjkFallback: true,
       cjkFallbackScanMax: 50,
+      redactionMode: 'off',
+      cwdAllowlist: [],
+      cwdDenylist: [],
+      allProjectsPolicy: 'allow',
     })
   })
 
@@ -21,6 +25,10 @@ describe('normalizeRecallConfig', () => {
       cjkHint: false,
       cjkFallback: false,
       cjkFallbackScanMax: 12,
+      redactionMode: 'off',
+      cwdAllowlist: [],
+      cwdDenylist: [],
+      allProjectsPolicy: 'allow',
     })
   })
 
@@ -34,6 +42,34 @@ describe('normalizeRecallConfig', () => {
     expect(normalizeRecallConfig({ maxLimit: 0 }).maxLimit).toBe(5)
     expect(normalizeRecallConfig({ maxLimit: 99 }).maxLimit).toBe(25)
     expect(normalizeRecallConfig({ defaultLimit: 8, maxLimit: 2 }).maxLimit).toBe(8)
+  })
+
+  it('normalizes the new v0.4 fields', () => {
+    expect(normalizeRecallConfig({ redactionMode: 'hash', cwdAllowlist: ['/a', '', 5 as unknown as string], cwdDenylist: ['/b'], allProjectsPolicy: 'confirm' })).toMatchObject({
+      redactionMode: 'hash',
+      cwdAllowlist: ['/a'],
+      cwdDenylist: ['/b'],
+      allProjectsPolicy: 'confirm',
+    })
+    expect(normalizeRecallConfig({ redactionMode: 'loud' as never, allProjectsPolicy: 'maybe' as never })).toMatchObject({
+      redactionMode: 'off',
+      allProjectsPolicy: 'allow',
+    })
+  })
+
+  it('cwdAllowed: denylist wins, allowlist restricts, empty lists are unrestricted', () => {
+    const cfg = normalizeRecallConfig({ cwdAllowlist: ['/proj', '/docs'], cwdDenylist: ['/proj/secret'] })
+    expect(cwdAllowed('/proj', cfg)).toBe(true)
+    expect(cwdAllowed('/proj/secret', cfg)).toBe(false)
+    expect(cwdAllowed('/elsewhere', cfg)).toBe(false)
+    expect(cwdAllowed(null, cfg)).toBe(false) // allowlist set: unknown cwd not covered
+    const open = normalizeRecallConfig()
+    expect(cwdAllowed('/anywhere', open)).toBe(true)
+    expect(cwdAllowed(null, open)).toBe(true)
+    const denyOnly = normalizeRecallConfig({ cwdDenylist: ['/nope'] })
+    expect(cwdAllowed('/fine', denyOnly)).toBe(true)
+    expect(cwdAllowed('/nope', denyOnly)).toBe(false)
+    expect(cwdAllowed(null, denyOnly)).toBe(true)
   })
 
   it('clamps cjkFallbackScanMax into 1..500', () => {

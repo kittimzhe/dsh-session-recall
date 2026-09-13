@@ -11,6 +11,7 @@ interface FakeEngine extends RecallQueryEngine {
   eventsRequests: Array<Record<string, unknown>>
   titleCalls: string[][]
   titleError?: Error
+  defaultEventSession: { createdAt: number; cwd: string | undefined }
   listCalls: number
   listResult: SessionRecord[]
   filterCalls: string[]
@@ -45,13 +46,14 @@ function makeEngine(page: Partial<SessionSearchPage<SessionSearchHit>> = {}, eve
     filterCalls: [],
     filterArgs: [],
     filterResults: new Map(),
+    defaultEventSession: { createdAt: new Date(2026, 7, 20).getTime(), cwd: '/proj' },
     async searchSessions(request) {
       engine.sessionsRequests.push(request as unknown as Record<string, unknown>)
       return { items: page.items ?? [], ...(page.nextCursor != null ? { nextCursor: page.nextCursor } : {}) } as SessionSearchPage<SessionSearchHit>
     },
     async searchEvents(request) {
       engine.eventsRequests.push(request as unknown as Record<string, unknown>)
-      return (eventPage ?? { items: [] }) as SessionEventSearchPage
+      return (eventPage ?? { items: [], session: engine.defaultEventSession }) as SessionEventSearchPage
     },
     async readTitleSnapshots(ids): Promise<SessionTitleObservationResult[]> {
       engine.titleCalls.push([...ids])
@@ -103,6 +105,7 @@ describe('recall tool definition', () => {
       scope: { cwd: null, allProjects: false, sessionId: null },
       count: 1,
       hasMore: false,
+      redacted: 0,
       items: [
         {
           sessionId: 's1',
@@ -278,6 +281,133 @@ describe('recall execute — within-session path', () => {
     expect(out.scope.sessionId).toBe('session-ca62e005')
     expect(out.items).toEqual([])
     expect(out.hint).toBeNull() // empty canned event page, ASCII query
+  })
+})
+
+describe('recall execute — scope policy (v0.4)', () => {
+  it('filters denylisted cwds out of cross-session hits', async () => {
+    const engine = makeEngine({ items: [hit('session-ok', '/proj', 'found it'), hit('session-no', '/secret', 'found it too')] })
+    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] }, engine), { query: 'found' }, '/proj')
+    expect(out.count).toBe(1)
+    expect(out.items[0]?.sessionId).toBe('session-ok')
+  })
+
+  it('restricts to the allowlist in cross-session hits', async () => {
+    const engine = makeEngine({ items: [hit('session-ok', '/proj', 'found it'), hit('session-no', '/elsewhere', 'found it too')] })
+    const out = await run(createRecallTool({ cwdAllowlist: ['/proj'] }, engine), { query: 'found' }, '/proj')
+    expect(out.count).toBe(1)
+    expect(out.items[0]?.cwd).toBe('/proj')
+  })
+
+  it('blocks the current cwd itself when it is not allowed', async () => {
+    const engine = makeEngine({ items: [hit('session-x', '/proj', 'found it')] })
+    const out = await run(createRecallTool({ cwdAllowlist: ['/other'] }, engine), { query: 'found' }, '/proj')
+    expect(out.count).toBe(0)
+    expect(out.hint).toContain('scope policy')
+    expect(engine.sessionsRequests).toHaveLength(0)
+  })
+
+  it('blocks a session_id call into a denylisted cwd', async () => {
+    const engine = makeEngine({}, { items: [doc('session-s', 'hello')], session: { createdAt: 5, cwd: '/secret' } } as unknown as SessionEventSearchPage)
+    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] }, engine), { query: 'hello', session_id: 'session-s' }, '/proj')
+    expect(out.count).toBe(0)
+    expect(out.hint).toContain('scope policy')
+  })
+
+  it('skips denylisted candidates in the CJK fallback scan', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('session-keep', '/proj'), record('session-skip', '/secret')]
+    engine.filterResults.set('session-keep', [doc('session-keep', '改简历字体')])
+    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] }, engine), { query: '字体' }, '/proj')
+    expect(out.count).toBe(1)
+    expect(engine.filterCalls).toEqual(['session-keep'])
+  })
+})
+
+describe('recall execute — all_projects gate (v0.4)', () => {
+  it("policy 'deny' ignores all_projects and explains it", async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
+    const out = await run(createRecallTool({ allProjectsPolicy: 'deny' }, engine), { query: 'found', all_projects: true }, '/proj')
+    expect(engine.sessionsRequests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/proj'] }])
+    expect(out.hint).toContain('all_projects was ignored')
+  })
+
+  it("policy 'confirm' honors an approved widen", async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/elsewhere', 'found it')] })
+    const asks: string[] = []
+    const out = await run(
+      createRecallTool({ allProjectsPolicy: 'confirm' }, engine, async (_exec, reason) => {
+        asks.push(reason)
+        return 'allowed-once'
+      }),
+      { query: 'found', all_projects: true },
+      '/proj',
+    )
+    expect(asks).toHaveLength(1)
+    expect(asks[0]).toContain('ALL project directories')
+    expect(engine.sessionsRequests[0]?.sessionFilters).toBeUndefined()
+    expect(out.scope.allProjects).toBe(true)
+    expect(out.hint).toBeNull()
+  })
+
+  it("policy 'confirm' falls back to cwd scope on rejection", async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
+    const out = await run(
+      createRecallTool({ allProjectsPolicy: 'confirm' }, engine, async () => 'rejected'),
+      { query: 'found', all_projects: true },
+      '/proj',
+    )
+    expect(engine.sessionsRequests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/proj'] }])
+    expect(out.hint).toContain('not approved (rejected)')
+  })
+
+  it("policy 'confirm' fails closed without an approver", async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
+    const out = await run(createRecallTool({ allProjectsPolicy: 'confirm' }, engine), { query: 'found', all_projects: true }, '/proj')
+    expect(out.hint).toContain('not approved (unavailable)')
+    expect(engine.sessionsRequests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/proj'] }])
+  })
+
+  it("policy 'confirm' swallows a throwing approver as unavailable", async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
+    const out = await run(
+      createRecallTool({ allProjectsPolicy: 'confirm' }, engine, async () => {
+        throw new Error('answerer exploded')
+      }),
+      { query: 'found', all_projects: true },
+      '/proj',
+    )
+    expect(out.hint).toContain('not approved (unavailable)')
+  })
+})
+
+describe('recall execute — redaction (v0.4)', () => {
+  it('masks secrets in snippets and reports the count', async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/proj', 'used Bearer abc123def456ghi789jkl here')] })
+    const out = await run(createRecallTool({ redactionMode: 'mask' }, engine), { query: 'used' }, '/proj')
+    expect(out.items[0]?.bestMatch.snippet).toContain('Bearer [REDACTED]')
+    expect(out.items[0]?.bestMatch.snippet).not.toContain('abc123def456ghi789jkl')
+    expect(out.redacted).toBeGreaterThanOrEqual(1)
+    expect(out.hint).toContain('redacted')
+  })
+
+  it('hashes the same secret to the same marker across hits', async () => {
+    const engine = makeEngine({
+      items: [hit('session-a1', '/proj', 'used Bearer abc123def456ghi789jkl here'), hit('session-b2', '/proj', 'again Bearer abc123def456ghi789jkl here')],
+    })
+    const out = await run(createRecallTool({ redactionMode: 'hash' }, engine), { query: 'Bearer' }, '/proj')
+    const markers = out.items.map((item) => item.bestMatch.snippet.match(/#[0-9a-f]{8}/)?.[0])
+    expect(markers[0]).toBeDefined()
+    expect(markers[0]).toBe(markers[1])
+    expect(out.redacted).toBe(2)
+  })
+
+  it('does nothing in off mode', async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/proj', 'used Bearer abc123def456ghi789jkl here')] })
+    const out = await run(createRecallTool(undefined, engine), { query: 'used' }, '/proj')
+    expect(out.items[0]?.bestMatch.snippet).toContain('abc123def456ghi789jkl')
+    expect(out.redacted).toBe(0)
+    expect(out.hint).toBeNull()
   })
 })
 

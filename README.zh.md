@@ -4,7 +4,32 @@
 
 [![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-DeepSeek Harness 的跨会话全文回忆插件：注册模型可调用的 `recall` 工具，让 agent 能**检索自己过往的会话原文**——"上周修的那个 bug"、"简历选的什么字体"——全部通过可信的 `ctx.sessionQuery` 缝完成。
+DeepSeek Harness 的**确定性跨会话全文检索**插件：注册模型可调用的 `recall` 工具，让 agent 能**检索自己过往的会话原文**——"上周修的那个 bug"、"简历选的什么字体"——全部通过可信的 `ctx.sessionQuery` 缝完成。
+
+## 项目定位
+
+`dsh-session-recall` 是一个强调正确性与边界控制的**会话检索层**。
+
+- 检索对象是原始会话日志，不是二次总结内容。
+- 默认按 cwd 收敛权限范围，放宽范围必须显式声明。
+- 追求可解释、可复现的检索行为，而不是"看起来更聪明"但有损的记忆抽取。
+
+如果你要做长期记忆编排，请用记忆框架；如果你要做可审计、有权限边界的历史检索，请用本插件。
+
+## 竞品视角
+
+| 能力重心 | 记忆框架类插件 | 通用检索类插件 | `dsh-session-recall` |
+|---|---|---|---|
+| 检索对象 | 推导后的记忆结构 | 视实现而定 | **原始会话事件文本** |
+| 范围控制 | 框架内约束 | 常较粗粒度 | **默认 cwd + 显式 `all_projects` 闸门** |
+| CJK 体验 | 视实现而定 | 常受分词限制 | **FTS + CJK 零命中子串回退** |
+| 输出契约 | 框架内部格式 | 不统一 | **类型化 `recall` 结果 + 稳定 hint** |
+
+## 路线图
+
+- **P1：排序策略可配** —— 在 FTS 相关度之上增加时间衰减、会话 pin 权重。
+- **P1：查询诊断元数据** —— 返回命中来源（fts/cjk-fallback/filters）与扫描预算。
+- **P2：证据联动导出** —— 命中后可一键触发对应会话导出。
 
 ## 为什么做这个
 
@@ -85,6 +110,19 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 ## 失败行为
 
 所有失败都返回友好的 `hint` 而不是裸异常：索引未开启会说明需要哪两个配置键；游标失效会告诉模型不带游标重开一次；`session_id` 不存在会建议先做跨会话搜索。标题补全是尽力而为——标题批量读取失败只降级为"无标题"行，绝不让搜索失败。
+
+## 范围策略与脱敏（v0.4）
+
+部署级权限控制——模型能读回什么，由配置说了算：
+
+| 配置 | 取值 | 默认 | 效果 |
+|---|---|---|---|
+| `redactionMode` | `off` / `mask` / `hash` | `off` | 对标题与摘录中疑似密钥的文本（Bearer 头、前缀式 API key、私钥块、邮箱）脱敏。`hash` 用确定性摘要 `#xxxxxxxx`（同一密钥同一标记）保持可比性。结果带 `redacted` 计数。 |
+| `cwdAllowlist` | 路径列表 | （无） | 只检索这些目录下启动的会话；当前项目目录本身也必须在列表内。 |
+| `cwdDenylist` | 路径列表 | （无） | 这些目录永不检索。deny 优先于 allow。 |
+| `allProjectsPolicy` | `allow` / `deny` / `confirm` | `allow` | `deny` 忽略 `all_projects` 并向模型说明；`confirm` 走官方 `@deepseek-ai/dsh-user-approval` 接缝向用户请求批准——无应答者时 fail-closed。 |
+
+三道闸门统一作用于跨会话命中、CJK 回退扫描和 `session_id` 直读——没有绕行路径。
 
 ## 已知限制
 

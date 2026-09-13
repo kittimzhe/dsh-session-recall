@@ -28,7 +28,8 @@ import type {
 import { SessionSearchCursor as brandCursor } from '@deepseek-ai/dsh-session-query'
 import { SessionId as brandSessionId, type SessionId } from '@deepseek-ai/dsh-session'
 import type { NormalizedRecallConfig, RecallConfig } from './config.ts'
-import { normalizeRecallConfig } from './config.ts'
+import { cwdAllowed, normalizeRecallConfig } from './config.ts'
+import { redactText } from './redact.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
 import type { RecallArgs, RecallItem, RecallResult } from './types.ts'
 import { clamp, hasCJK, id8, normalizeQuery, snippetAround, splitTerms } from './util.ts'
@@ -47,7 +48,8 @@ export const RECALL_TOOL_DESCRIPTION = [
   'Use it when the user refers to earlier work ("that bug we fixed last week", "the font we chose for my resume") or when prior context was compacted away.',
   'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to a substring scan in which every whitespace-separated term must match. Returns the best-matching event snippet per session plus the session id.',
   'Then use the read tool on files, or ask the user, to go deeper — this tool only points at history, it does not resume sessions.',
-  'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere.',
+  'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere (the deployment may ignore it or require user approval).',
+  'When the deployment enables redaction, secret-looking text in snippets appears as [REDACTED] or a #hash marker — treat it as removed; do not try to reconstruct or echo it.',
   'The first search after startup may be slow while the index builds.',
 ].join(' ')
 
@@ -82,6 +84,17 @@ function friendlyError(error: unknown): string {
   }
 }
 
+/** The approval verdict vocabulary mirrored from `@deepseek-ai/dsh-user-approval`. */
+export type RecallApprovalVerdict = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+
+/**
+ * Optional user-approval seam for the `all_projects` gate (`allProjectsPolicy:
+ * 'confirm'`). Receives the tool run context (for the agent) and a
+ * human-readable reason; `'allowed-once'` is the only grant. Wired from
+ * `ctx.approval` in the plugin entry; fail-closed when absent.
+ */
+export type RecallApprover = (exec: ToolRunContext, reason: string) => Promise<RecallApprovalVerdict>
+
 function recallError(query: string, error: unknown): RecallResult {
   return {
     query,
@@ -91,6 +104,7 @@ function recallError(query: string, error: unknown): RecallResult {
     items: [],
     nextCursor: null,
     hint: friendlyError(error),
+    redacted: 0,
   }
 }
 
@@ -172,12 +186,14 @@ async function cjkScanSessions(
   query: string,
   agentCwd: string | null,
   wantAll: boolean,
+  cfg: NormalizedRecallConfig,
   scanMax: number,
   limit: number,
   signal: AbortSignal | undefined,
 ): Promise<RecallItem[]> {
   const all = await engine.listSessions(signal)
-  const candidates = !wantAll && agentCwd != null ? all.filter((record) => record.header.cwd === agentCwd) : all
+  const scoped = !wantAll && agentCwd != null ? all.filter((record) => record.header.cwd === agentCwd) : all
+  const candidates = scoped.filter((record) => cwdAllowed(record.header.cwd, cfg))
   const items: RecallItem[] = []
   for (const record of candidates.slice(0, scanMax)) {
     if (items.length >= limit) break
@@ -237,6 +253,7 @@ const recallOutputSchema = {
     },
     nextCursor: nullableString,
     hint: nullableString,
+    redacted: { type: 'integer' },
   },
 } as const
 
@@ -244,8 +261,42 @@ const recallOutputSchema = {
  * Build the `recall` ToolDefinition around a concrete sessionQuery engine.
  * Pure construction — no registration happens here.
  */
-export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngine): ToolDefinition {
+export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngine, approver?: RecallApprover): ToolDefinition {
   const cfg: NormalizedRecallConfig = normalizeRecallConfig(config)
+
+  /** Apply configured redaction to titles and snippets; report a model-facing note. */
+  function applyRedaction(items: RecallItem[]): { items: RecallItem[]; redacted: number; hint: string | null } {
+    if (cfg.redactionMode === 'off') return { items, redacted: 0, hint: null }
+    let redacted = 0
+    const out = items.map((item) => {
+      const title = item.title == null ? null : redactText(item.title, cfg.redactionMode)
+      const snippet = redactText(item.bestMatch.snippet, cfg.redactionMode)
+      redacted += (title?.count ?? 0) + snippet.count
+      return {
+        ...item,
+        title: title == null ? null : title.text,
+        bestMatch: { ...item.bestMatch, snippet: snippet.text },
+      }
+    })
+    const hint = redacted > 0 ? `${redacted} secret-looking field(s) were redacted from this result (mode: ${cfg.redactionMode}).` : null
+    return { items: out, redacted, hint }
+  }
+
+  function joinHints(...parts: Array<string | null | undefined>): string | null {
+    const kept = parts.filter((part): part is string => part != null && part !== '')
+    return kept.length > 0 ? kept.join(' ') : null
+  }
+
+  /** Ask the approval seam whether this all_projects call may proceed. */
+  async function decideAllProjects(exec: ToolRunContext, query: string): Promise<RecallApprovalVerdict> {
+    if (approver == null) return 'unavailable'
+    try {
+      return await approver(exec, `recall: search sessions from ALL project directories (query: "${query}")`)
+    } catch {
+      return 'unavailable'
+    }
+  }
+
   return defineTool({
     name: 'recall',
     description: RECALL_TOOL_DESCRIPTION,
@@ -270,8 +321,34 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
 
       const limit = clamp(Math.trunc(args.limit ?? cfg.defaultLimit), 1, cfg.maxLimit)
       const agentCwd = exec.agent?.session.header?.cwd ?? null
-      const wantAll = args.all_projects === true && cfg.allowAllProjects
+
+      const scopeHints: string[] = []
+      let wantAll = false
+      if (args.session_id == null && args.all_projects === true) {
+        if (!cfg.allowAllProjects || cfg.allProjectsPolicy === 'deny') {
+          scopeHints.push('all_projects was ignored: cross-project search is disabled by this deployment. Searched the current project only.')
+        } else if (cfg.allProjectsPolicy === 'confirm') {
+          const verdict = await decideAllProjects(exec, query)
+          if (verdict === 'allowed-once') wantAll = true
+          else scopeHints.push(`all_projects was not approved (${verdict}); searched the current project only.`)
+        } else {
+          wantAll = true
+        }
+      }
       const scope = { cwd: agentCwd, allProjects: wantAll, sessionId: args.session_id ?? null }
+
+      if (args.session_id == null && !wantAll && agentCwd != null && !cwdAllowed(agentCwd, cfg)) {
+        return {
+          query,
+          scope,
+          count: 0,
+          hasMore: false,
+          items: [],
+          nextCursor: null,
+          hint: 'the current project directory is excluded by the recall scope policy (cwd allowlist/denylist). Ask the user to adjust the plugin configuration if this is unexpected.',
+          redacted: 0,
+        }
+      }
 
       try {
         if (args.session_id != null && args.session_id !== '') {
@@ -280,6 +357,18 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
             { sessionId, query, limit, cursor: brand(args.cursor) },
             { signal: exec.signal },
           )
+          if (!cwdAllowed(page.session.cwd ?? null, cfg)) {
+            return {
+              query,
+              scope,
+              count: 0,
+              hasMore: false,
+              items: [],
+              nextCursor: null,
+              hint: 'that session belongs to a project directory excluded by the recall scope policy (cwd allowlist/denylist).',
+              redacted: 0,
+            }
+          }
           let items = eventItems(page, sessionId)
           let hint: string | null = null
           if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
@@ -301,7 +390,17 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
           } else if (items.length === 0) {
             hint = cjkZeroHitHint(query, true, cfg.cjkHint)
           }
-          return { query, scope, count: items.length, hasMore: page.nextCursor != null, items, nextCursor: page.nextCursor ?? null, hint }
+          const red = applyRedaction(items)
+          return {
+            query,
+            scope,
+            count: red.items.length,
+            hasMore: page.nextCursor != null,
+            items: red.items,
+            nextCursor: page.nextCursor ?? null,
+            hint: joinHints(hint, red.hint),
+            redacted: red.redacted,
+          }
         }
 
         const request: SessionSearchRequest = { query, limit }
@@ -309,26 +408,28 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
         if (args.cursor != null && args.cursor !== '') request.cursor = brand(args.cursor)
         const page = await engine.searchSessions(request, { signal: exec.signal })
         const titles = await titlesFor(engine, page.items.map((hit) => hit.header.id), exec.signal)
-        let items = toItems(page.items, titles)
+        let items = toItems(page.items, titles).filter((item) => cwdAllowed(item.cwd, cfg))
         let hint: string | null = null
         let fallbackRan = false
         if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
           fallbackRan = true
-          const scanned = await cjkScanSessions(engine, query, agentCwd, wantAll, cfg.cjkFallbackScanMax, limit, exec.signal)
+          const scanned = await cjkScanSessions(engine, query, agentCwd, wantAll, cfg, cfg.cjkFallbackScanMax, limit, exec.signal)
           const scanTitles = await titlesFor(engine, scanned.map((item) => item.sessionId), exec.signal)
           items = scanned.map((item) => ({ ...item, title: scanTitles.get(item.sessionId) ?? null }))
           hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)
         } else if (items.length === 0) {
           hint = cjkZeroHitHint(query, true, cfg.cjkHint)
         }
+        const red = applyRedaction(items)
         return {
           query,
           scope,
-          count: items.length,
+          count: red.items.length,
           hasMore: !fallbackRan && page.nextCursor != null,
-          items,
+          items: red.items,
           nextCursor: !fallbackRan ? (page.nextCursor ?? null) : null,
-          hint,
+          hint: joinHints(hint, ...scopeHints, red.hint),
+          redacted: red.redacted,
         }
       } catch (error) {
         return recallError(query, error)

@@ -8,6 +8,7 @@ function result(overwrites: Partial<RecallResult> = {}): RecallResult {
     scope: { cwd: '/Users/me/resume', allProjects: false, sessionId: null },
     count: 2,
     hasMore: false,
+    redacted: 0,
     items: [
       {
         sessionId: 'session-ca62e005-4274-477b-bd56-9d9508edb040',

@@ -36,6 +36,8 @@ export interface RecallResult {
   items: RecallItem[]
   nextCursor: string | null
   hint: string | null
+  /** How many secret-looking fields were redacted in this result (0 when redaction is off). */
+  redacted: number
 }
 
 /** The typed model-facing arguments after schema validation. */
