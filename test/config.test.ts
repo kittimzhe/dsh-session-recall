@@ -14,6 +14,8 @@ describe('normalizeRecallConfig', () => {
       cwdAllowlist: [],
       cwdDenylist: [],
       allProjectsPolicy: 'allow',
+      recencyHalfLifeDays: undefined,
+      pinnedCwds: [],
     })
   })
 
@@ -29,6 +31,8 @@ describe('normalizeRecallConfig', () => {
       cwdAllowlist: [],
       cwdDenylist: [],
       allProjectsPolicy: 'allow',
+      recencyHalfLifeDays: undefined,
+      pinnedCwds: [],
     })
   })
 
@@ -70,6 +74,16 @@ describe('normalizeRecallConfig', () => {
     expect(cwdAllowed('/fine', denyOnly)).toBe(true)
     expect(cwdAllowed('/nope', denyOnly)).toBe(false)
     expect(cwdAllowed(null, denyOnly)).toBe(true)
+  })
+
+  it('normalizes ranking fields (v0.5)', () => {
+    expect(normalizeRecallConfig({ recencyHalfLifeDays: 30, pinnedCwds: ['/a', ''] })).toMatchObject({ recencyHalfLifeDays: 30, pinnedCwds: ['/a'] })
+    expect(normalizeRecallConfig({ recencyHalfLifeDays: 0 }).recencyHalfLifeDays).toBeUndefined()
+    expect(normalizeRecallConfig({ recencyHalfLifeDays: -5 }).recencyHalfLifeDays).toBeUndefined()
+    expect(normalizeRecallConfig({ recencyHalfLifeDays: 99_999 }).recencyHalfLifeDays).toBe(3650)
+    expect(normalizeRecallConfig({ recencyHalfLifeDays: Number.NaN }).recencyHalfLifeDays).toBeUndefined()
+    expect(normalizeRecallConfig().pinnedCwds).toEqual([])
+    expect(normalizeRecallConfig().recencyHalfLifeDays).toBeUndefined()
   })
 
   it('clamps cjkFallbackScanMax into 1..500', () => {

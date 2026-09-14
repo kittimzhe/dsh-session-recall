@@ -9,6 +9,7 @@ function result(overwrites: Partial<RecallResult> = {}): RecallResult {
     count: 2,
     hasMore: false,
     redacted: 0,
+    diagnostics: { source: 'fts', ranked: false },
     items: [
       {
         sessionId: 'session-ca62e005-4274-477b-bd56-9d9508edb040',
@@ -107,5 +108,22 @@ describe('cjkFallbackHint', () => {
     expect(cjkFallbackHint(3, true)).toContain('3 session')
     expect(cjkFallbackHint(0, true)).toBeNull()
     expect(cjkFallbackHint(3, false)).toBeNull()
+  })
+})
+
+describe('diagnostics line (v0.5)', () => {
+  it('stays silent for plain fts results', () => {
+    const text = renderRecallText(result())
+    expect(text).not.toContain('Diagnostics')
+  })
+
+  it('explains the fallback scan and re-ranking', () => {
+    const text = renderRecallText(result({ diagnostics: { source: 'cjk-fallback', scanned: 37, scanBudget: 50, ranked: true } }))
+    expect(text).toContain('Diagnostics: matched via cjk-fallback (scanned 37 of 50); re-ranked: recency decay + pinned projects')
+  })
+
+  it('mentions re-ranking alone', () => {
+    const text = renderRecallText(result({ diagnostics: { source: 'fts', ranked: true } }))
+    expect(text).toContain('Diagnostics: re-ranked')
   })
 })

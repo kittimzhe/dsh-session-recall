@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — 2026-09-14
+
+Ranking controls + query diagnostics: the retrieval layer explains itself.
+
+- **`recencyHalfLifeDays`** — re-rank cross-session hits with exponential recency decay: backend rank (1/rank relevance proxy) × `0.5^(ageDays/halfLife)` over the match time. Unset or `<= 0` keeps backend order. Applies per result page (the backend pages lazily; a documented limitation).
+- **`pinnedCwds`** — sessions from pinned project directories float to the top as a group, stable inside the group.
+- **Diagnostics in every result** — new `diagnostics` field: `source` (`fts` / `cjk-fallback` / `session-scan`), `scanned` + `scanBudget` when a fallback scan ran, and `ranked`. Null when the call failed before searching. The text projection adds a compact `Diagnostics:` line when there is something to say.
+- Ranking is pure and exported (`rankItems` / `rankingActive`) for reuse and testing.
+
 ## 0.4.1 — 2026-09-13
 
 - Fix dead relative links on the npm readme: language switch and LICENSE links now point at absolute GitHub URLs.

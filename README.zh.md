@@ -27,8 +27,6 @@ DeepSeek Harness 的**确定性跨会话全文检索**插件：注册模型可�
 
 ## 路线图
 
-- **P1：排序策略可配** —— 在 FTS 相关度之上增加时间衰减、会话 pin 权重。
-- **P1：查询诊断元数据** —— 返回命中来源（fts/cjk-fallback/filters）与扫描预算。
 - **P2：证据联动导出** —— 命中后可一键触发对应会话导出。
 
 ## 为什么做这个
@@ -120,9 +118,13 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 | `redactionMode` | `off` / `mask` / `hash` | `off` | 对标题与摘录中疑似密钥的文本（Bearer 头、前缀式 API key、私钥块、邮箱）脱敏。`hash` 用确定性摘要 `#xxxxxxxx`（同一密钥同一标记）保持可比性。结果带 `redacted` 计数。 |
 | `cwdAllowlist` | 路径列表 | （无） | 只检索这些目录下启动的会话；当前项目目录本身也必须在列表内。 |
 | `cwdDenylist` | 路径列表 | （无） | 这些目录永不检索。deny 优先于 allow。 |
+| `recencyHalfLifeDays` | 天数（如 `30`） | （关闭） | 跨会话命中重排：后端名次 × 命中时间上的指数衰减。不设或 `<= 0` 保持后端顺序。按结果页生效。 |
+| `pinnedCwds` | 路径列表 | （无） | 这些项目目录的会话作为一组排在最前。 |
 | `allProjectsPolicy` | `allow` / `deny` / `confirm` | `allow` | `deny` 忽略 `all_projects` 并向模型说明；`confirm` 走官方 `@deepseek-ai/dsh-user-approval` 接缝向用户请求批准——无应答者时 fail-closed。 |
 
 三道闸门统一作用于跨会话命中、CJK 回退扫描和 `session_id` 直读——没有绕行路径。
+
+每个结果还带 `diagnostics` 对象（v0.5）：命中由哪个引擎产生（`fts` / `cjk-fallback` / `session-scan`）、回退扫描访问了几个会话（对照预算）、是否做了重排——让调用方知道「为什么是这些结果」。
 
 ## 已知限制
 

@@ -31,6 +31,10 @@ export interface RecallConfig {
    * approve through the `@deepseek-ai/dsh-user-approval` seam; fail-closed).
    */
   allProjectsPolicy?: AllProjectsPolicy
+  /** Re-rank cross-session hits with exponential recency decay (half-life in days). Default: off. */
+  recencyHalfLifeDays?: number
+  /** Sessions started in these project directories rank first. Default: none. */
+  pinnedCwds?: readonly string[]
 }
 
 /** Validated, fully defaulted configuration. */
@@ -45,6 +49,8 @@ export interface NormalizedRecallConfig {
   readonly cwdAllowlist: readonly string[]
   readonly cwdDenylist: readonly string[]
   readonly allProjectsPolicy: AllProjectsPolicy
+  readonly recencyHalfLifeDays: number | undefined
+  readonly pinnedCwds: readonly string[]
 }
 
 export const RECALL_DEFAULT_LIMIT_MAX = 10
@@ -81,6 +87,11 @@ export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallCo
     cwdAllowlist: stringList(config?.cwdAllowlist),
     cwdDenylist: stringList(config?.cwdDenylist),
     allProjectsPolicy: normalizePolicy(config?.allProjectsPolicy),
+    recencyHalfLifeDays:
+      typeof config?.recencyHalfLifeDays === 'number' && Number.isFinite(config.recencyHalfLifeDays) && config.recencyHalfLifeDays > 0
+        ? Math.min(3650, Math.trunc(config.recencyHalfLifeDays))
+        : undefined,
+    pinnedCwds: stringList(config?.pinnedCwds),
   }
 }
 

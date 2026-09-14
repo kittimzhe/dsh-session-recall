@@ -30,8 +30,9 @@ import { SessionId as brandSessionId, type SessionId } from '@deepseek-ai/dsh-se
 import type { NormalizedRecallConfig, RecallConfig } from './config.ts'
 import { cwdAllowed, normalizeRecallConfig } from './config.ts'
 import { redactText } from './redact.ts'
+import { rankItems, rankingActive } from './rank.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
-import type { RecallArgs, RecallItem, RecallResult } from './types.ts'
+import type { RecallArgs, RecallDiagnostics, RecallItem, RecallResult } from './types.ts'
 import { clamp, hasCJK, id8, normalizeQuery, snippetAround, splitTerms } from './util.ts'
 
 /** The ctx.sessionQuery surface this tool consumes (structural, for testability). */
@@ -105,6 +106,7 @@ function recallError(query: string, error: unknown): RecallResult {
     nextCursor: null,
     hint: friendlyError(error),
     redacted: 0,
+    diagnostics: null,
   }
 }
 
@@ -190,12 +192,13 @@ async function cjkScanSessions(
   scanMax: number,
   limit: number,
   signal: AbortSignal | undefined,
-): Promise<RecallItem[]> {
+): Promise<{ items: RecallItem[]; scanned: number; budget: number }> {
   const all = await engine.listSessions(signal)
   const scoped = !wantAll && agentCwd != null ? all.filter((record) => record.header.cwd === agentCwd) : all
   const candidates = scoped.filter((record) => cwdAllowed(record.header.cwd, cfg))
+  const page = candidates.slice(0, scanMax)
   const items: RecallItem[] = []
-  for (const record of candidates.slice(0, scanMax)) {
+  for (const record of page) {
     if (items.length >= limit) break
     const { filters, highlight } = cjkTextFilters(query)
     const docs = await engine.filterEvents(record.header.id, filters)
@@ -213,7 +216,7 @@ async function cjkScanSessions(
       bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
     })
   }
-  return items
+  return { items, scanned: page.length, budget: scanMax }
 }
 
 const nullableString = { oneOf: [{ type: 'string' }, { type: 'null' }] } as const
@@ -254,6 +257,21 @@ const recallOutputSchema = {
     nextCursor: nullableString,
     hint: nullableString,
     redacted: { type: 'integer' },
+    diagnostics: {
+      oneOf: [
+        { type: 'null' },
+        {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            source: { type: 'string', enum: ['fts', 'cjk-fallback', 'session-scan'] },
+            scanned: { type: 'integer' },
+            scanBudget: { type: 'integer' },
+            ranked: { type: 'boolean' },
+          },
+        },
+      ],
+    },
   },
 } as const
 
@@ -347,6 +365,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
           nextCursor: null,
           hint: 'the current project directory is excluded by the recall scope policy (cwd allowlist/denylist). Ask the user to adjust the plugin configuration if this is unexpected.',
           redacted: 0,
+          diagnostics: null,
         }
       }
 
@@ -367,13 +386,16 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
               nextCursor: null,
               hint: 'that session belongs to a project directory excluded by the recall scope policy (cwd allowlist/denylist).',
               redacted: 0,
+              diagnostics: null,
             }
           }
           let items = eventItems(page, sessionId)
           let hint: string | null = null
+          let diagnostics: RecallDiagnostics = { source: 'fts', ranked: false }
           if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
             const { filters, highlight } = cjkTextFilters(query)
             const docs = await engine.filterEvents(sessionId, filters)
+            diagnostics = { source: 'session-scan', scanned: 1, scanBudget: cfg.cjkFallbackScanMax, ranked: false }
             if (docs.length > 0) {
               items = docs.slice(0, limit).map((doc) => ({
                 sessionId,
@@ -400,6 +422,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
             nextCursor: page.nextCursor ?? null,
             hint: joinHints(hint, red.hint),
             redacted: red.redacted,
+            diagnostics,
           }
         }
 
@@ -408,14 +431,18 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
         if (args.cursor != null && args.cursor !== '') request.cursor = brand(args.cursor)
         const page = await engine.searchSessions(request, { signal: exec.signal })
         const titles = await titlesFor(engine, page.items.map((hit) => hit.header.id), exec.signal)
-        let items = toItems(page.items, titles).filter((item) => cwdAllowed(item.cwd, cfg))
+        const rankingOptions = { recencyHalfLifeDays: cfg.recencyHalfLifeDays, pinnedCwds: cfg.pinnedCwds }
+        const ranked = rankingActive(rankingOptions)
+        let items = rankItems(toItems(page.items, titles).filter((item) => cwdAllowed(item.cwd, cfg)), rankingOptions)
         let hint: string | null = null
         let fallbackRan = false
+        let diagnostics: RecallDiagnostics = { source: 'fts', ranked }
         if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
           fallbackRan = true
-          const scanned = await cjkScanSessions(engine, query, agentCwd, wantAll, cfg, cfg.cjkFallbackScanMax, limit, exec.signal)
-          const scanTitles = await titlesFor(engine, scanned.map((item) => item.sessionId), exec.signal)
-          items = scanned.map((item) => ({ ...item, title: scanTitles.get(item.sessionId) ?? null }))
+          const scan = await cjkScanSessions(engine, query, agentCwd, wantAll, cfg, cfg.cjkFallbackScanMax, limit, exec.signal)
+          const scanTitles = await titlesFor(engine, scan.items.map((item) => item.sessionId), exec.signal)
+          items = rankItems(scan.items.map((item) => ({ ...item, title: scanTitles.get(item.sessionId) ?? null })), rankingOptions)
+          diagnostics = { source: 'cjk-fallback', scanned: scan.scanned, scanBudget: scan.budget, ranked }
           hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)
         } else if (items.length === 0) {
           hint = cjkZeroHitHint(query, true, cfg.cjkHint)
@@ -430,6 +457,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
           nextCursor: !fallbackRan ? (page.nextCursor ?? null) : null,
           hint: joinHints(hint, ...scopeHints, red.hint),
           redacted: red.redacted,
+          diagnostics,
         }
       } catch (error) {
         return recallError(query, error)

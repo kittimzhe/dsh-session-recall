@@ -1,7 +1,7 @@
 /** Native/model-facing text and UI-card projections of a validated RecallResult. */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
-import type { RecallResult } from './types.ts'
+import type { RecallDiagnostics, RecallResult } from './types.ts'
 import { formatDate, firstLineClipped, hasCJK } from './util.ts'
 
 const SNIPPET_CHARS = 120
@@ -27,6 +27,9 @@ export function renderRecallText(result: RecallResult): string {
   const noun = result.scope.sessionId != null ? 'events' : 'sessions'
   lines.push(`Recall "${result.query}" — ${result.count} ${noun}${scopeParts.length > 0 ? ` (${scopeParts.join(', ')})` : ''}`)
 
+  const diag = diagnosticsLine(result.diagnostics)
+  if (diag !== null) lines.push(diag)
+
   if (result.items.length === 0) {
     lines.push('No matches.')
   } else {
@@ -39,6 +42,18 @@ export function renderRecallText(result: RecallResult): string {
   if (result.hasMore && result.nextCursor != null) lines.push(`More: re-call with cursor="${result.nextCursor}"`)
   if (result.hint != null) lines.push(`Hint: ${result.hint}`)
   return lines.join('\n')
+}
+
+/** One compact diagnostics line, only when it carries information. */
+function diagnosticsLine(d: RecallDiagnostics | null): string | null {
+  if (d == null) return null
+  const parts: string[] = []
+  if (d.source !== 'fts') {
+    const scan = d.scanned !== undefined ? ` (scanned ${d.scanned}${d.scanBudget !== undefined ? ` of ${d.scanBudget}` : ''})` : ''
+    parts.push(`matched via ${d.source}${scan}`)
+  }
+  if (d.ranked) parts.push('re-ranked: recency decay + pinned projects')
+  return parts.length > 0 ? `Diagnostics: ${parts.join('; ')}` : null
 }
 
 /** Content-block projection required by the tool's output declaration. */

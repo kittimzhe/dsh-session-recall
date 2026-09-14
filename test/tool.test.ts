@@ -106,6 +106,7 @@ describe('recall tool definition', () => {
       count: 1,
       hasMore: false,
       redacted: 0,
+      diagnostics: { source: 'fts', ranked: false },
       items: [
         {
           sessionId: 's1',
@@ -408,6 +409,70 @@ describe('recall execute — redaction (v0.4)', () => {
     expect(out.items[0]?.bestMatch.snippet).toContain('abc123def456ghi789jkl')
     expect(out.redacted).toBe(0)
     expect(out.hint).toBeNull()
+  })
+})
+
+describe('recall execute — ranking & diagnostics (v0.5)', () => {
+  const DAY = 86_400_000
+
+  function hitAt(id: string, cwd: string | undefined, snippet: string, matchTime: number): SessionSearchHit {
+    const base = hit(id, cwd, snippet)
+    ;(base.bestMatch as { time: number }).time = matchTime
+    return base
+  }
+
+  it('reports fts source and no ranking by default', async () => {
+    const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
+    const out = await run(createRecallTool(undefined, engine), { query: 'found' }, '/proj')
+    expect(out.diagnostics).toEqual({ source: 'fts', ranked: false })
+  })
+
+  it('reorders hits under recency decay: newer overtakes older rank-1', async () => {
+    const engine = makeEngine({
+      items: [hitAt('session-old', '/proj', 'found it', Date.now() - 90 * DAY), hitAt('session-new', '/proj', 'found it', Date.now() - DAY)],
+    })
+    const out = await run(createRecallTool({ recencyHalfLifeDays: 30 }, engine), { query: 'found' }, '/proj')
+    expect(out.items.map((item) => item.sessionId)).toEqual(['session-new', 'session-old'])
+    expect(out.diagnostics).toMatchObject({ source: 'fts', ranked: true })
+  })
+
+  it('floats pinned cwd hits to the top', async () => {
+    const engine = makeEngine({ items: [hitAt('session-plain', '/plain', 'found it', Date.now()), hitAt('session-pin', '/proj', 'found it', Date.now() - 300 * DAY)] })
+    const out = await run(createRecallTool({ pinnedCwds: ['/proj'] }, engine), { query: 'found' }, '/proj')
+    expect(out.items.map((item) => item.sessionId)).toEqual(['session-pin', 'session-plain'])
+  })
+
+  it('keeps backend order when ranking is configured but disabled by value', async () => {
+    const engine = makeEngine({ items: [hitAt('session-old', '/proj', 'found it', Date.now() - 90 * DAY), hitAt('session-new', '/proj', 'found it', Date.now() - DAY)] })
+    const out = await run(createRecallTool({ recencyHalfLifeDays: 0 }, engine), { query: 'found' }, '/proj')
+    expect(out.items.map((item) => item.sessionId)).toEqual(['session-old', 'session-new'])
+    expect(out.diagnostics).toEqual({ source: 'fts', ranked: false })
+  })
+
+  it('diagnoses the cross-session cjk fallback with scan counts', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('session-keep', '/proj'), record('session-keep2', '/proj')]
+    engine.filterResults.set('session-keep', [doc('session-keep', '改简历字体')])
+    const out = await run(createRecallTool({ cjkFallbackScanMax: 10 }, engine), { query: '字体' }, '/proj')
+    // scanned counts VISITED sessions (both), not matching ones (one).
+    expect(out.diagnostics).toEqual({ source: 'cjk-fallback', scanned: 2, scanBudget: 10, ranked: false })
+    expect(out.count).toBe(1)
+  })
+
+  it('diagnoses the within-session scan path', async () => {
+    const engine = makeEngine({}, { items: [], session: { createdAt: 5, cwd: '/proj' } } as unknown as SessionEventSearchPage)
+    engine.filterResults.set('session-zh', [doc('session-zh', '深度学习框架')])
+    const out = await run(createRecallTool(undefined, engine), { query: '深度学习', session_id: 'session-zh' }, '/proj')
+    expect(out.diagnostics).toEqual({ source: 'session-scan', scanned: 1, scanBudget: 50, ranked: false })
+  })
+
+  it('diagnostics is null when the call fails before searching', async () => {
+    const engine = makeEngine()
+    ;(engine as { searchSessions: unknown }).searchSessions = async () => {
+      throw Object.assign(new Error('off'), { code: 'SESSION_QUERY_SEARCH_DISABLED' })
+    }
+    const out = await run(createRecallTool(undefined, engine), { query: 'x' }, '/proj')
+    expect(out.diagnostics).toBeNull()
   })
 })
 

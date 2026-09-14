@@ -27,6 +27,18 @@ export interface RecallScope {
   sessionId: string | null
 }
 
+/** How the matches in a result were produced (v0.5 diagnostics). */
+export interface RecallDiagnostics {
+  /** Which engine produced the matches. */
+  readonly source: 'fts' | 'cjk-fallback' | 'session-scan'
+  /** Sessions visited by the fallback scan, when it ran. */
+  readonly scanned?: number
+  /** The fallback scan budget (`cjkFallbackScanMax`), when a scan ran. */
+  readonly scanBudget?: number
+  /** True when re-ranking (recency decay / pinning) was applied to this page. */
+  readonly ranked: boolean
+}
+
 /** The `recall` tool's canonical JSON value, validated against the output schema. */
 export interface RecallResult {
   query: string
@@ -38,6 +50,8 @@ export interface RecallResult {
   hint: string | null
   /** How many secret-looking fields were redacted in this result (0 when redaction is off). */
   redacted: number
+  /** How this result was produced; null when the call failed before searching. */
+  diagnostics: RecallDiagnostics | null
 }
 
 /** The typed model-facing arguments after schema validation. */

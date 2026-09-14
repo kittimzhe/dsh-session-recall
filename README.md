@@ -27,8 +27,6 @@ If you need agent memory orchestration, use a memory framework; if you need boun
 
 ## Roadmap
 
-- **P1: ranking controls** — configurable recency decay and session pinning on top of FTS relevance.
-- **P1: query diagnostics** — expose match reason (fts/cjk-fallback/filters) and scan budget in result metadata.
 - **P2: evidence handoff** — one-click bridge to session export for matched sessions.
 
 ## Why
@@ -120,9 +118,13 @@ Deployment-level controls for what the model may read back:
 | `redactionMode` | `off` / `mask` / `hash` | `off` | Redact secret-looking text (bearer headers, prefixed API keys, private-key blocks, emails) in snippets and titles. `hash` keeps secrets comparable (`#xxxxxxxx`, same secret → same marker) without being readable. Results carry a `redacted` count. |
 | `cwdAllowlist` | list of paths | (none) | Only sessions started in these directories are searchable; the calling cwd itself must be listed. |
 | `cwdDenylist` | list of paths | (none) | These directories are never searchable. Deny wins over allow. |
+| `recencyHalfLifeDays` | days (e.g. `30`) | (off) | Re-rank cross-session hits: backend rank × exponential recency decay over the match time. Unset or `<= 0` keeps backend order. Per result page. |
+| `pinnedCwds` | list of paths | (none) | Sessions from these project directories rank first, as a group. |
 | `allProjectsPolicy` | `allow` / `deny` / `confirm` | `allow` | `deny` ignores `all_projects` with a model-facing hint; `confirm` asks the user through the official `@deepseek-ai/dsh-user-approval` seam — fail-closed when no answerer is composed. |
 
 All three gates apply uniformly to cross-session hits, the CJK fallback scan, and `session_id` reads — no bypass route.
+
+Every result also carries a `diagnostics` object (v0.5): which engine produced the matches (`fts` / `cjk-fallback` / `session-scan`), how many sessions a fallback scan visited against its budget, and whether re-ranking was applied — so callers can tell *why* they got what they got.
 
 ## Known limitations
 
