@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionEventResultFilter, SessionEventSearchDocument, SessionEventSearchPage, SessionRecord, SessionSearchHit, SessionSearchPage, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
+import type { SessionEventResultFilter, SessionEventSearchDocument, SessionEventSearchPage, SessionLineageTrace, SessionRecord, SessionSearchHit, SessionSearchPage, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { createRecallTool, type RecallQueryEngine } from '../src/tool.ts'
@@ -17,6 +17,8 @@ interface FakeEngine extends RecallQueryEngine {
   filterCalls: string[]
   filterArgs: Array<readonly SessionEventResultFilter[]>
   filterResults: Map<string, SessionEventSearchDocument[]>
+  lineageTraceCalls: unknown[]
+  lineageTraceResult: SessionLineageTrace | null
 }
 
 function hit(id: string, cwd: string | undefined, snippet: string, seq = 1): SessionSearchHit {
@@ -73,17 +75,30 @@ function makeEngine(page: Partial<SessionSearchPage<SessionSearchHit>> = {}, eve
       engine.filterArgs.push(filters)
       return engine.filterResults.get(sessionId) ?? []
     },
+    lineageTraceCalls: [],
+    lineageTraceResult: null,
+    async traceSession(sessionId) {
+      engine.lineageTraceCalls.push(sessionId)
+      if (engine.lineageTraceResult != null) return engine.lineageTraceResult
+      return {
+        target: { header: { id: String(sessionId), createdAt: 0, version: 0 } },
+        ancestors: [],
+        descendants: [],
+        complete: true,
+        root: { header: { id: String(sessionId), createdAt: 0, version: 0 } },
+      } as unknown as SessionLineageTrace
+    },
   }
   return engine
 }
 
-function makeExec(cwd?: string): ToolRunContext {
+function makeExec(cwd?: string, sessionId = 'caller-session-1'): ToolRunContext {
   return {
     callId: 'c1',
     name: 'recall',
     arguments: {},
     signal: new AbortController().signal,
-    ...(cwd != null ? { agent: { session: { header: { cwd } } } } : {}),
+    agent: { session: { id: sessionId, header: { cwd } } },
   } as unknown as ToolRunContext
 }
 
@@ -93,7 +108,7 @@ async function run(tool: ToolDefinition, args: Record<string, unknown>, cwd?: st
 
 describe('recall tool definition', () => {
   it('declares the name, timeout, concurrency, and schema-compatible output', () => {
-    const tool = createRecallTool(undefined, makeEngine())
+    const tool = createRecallTool({ callerTreeOnly: false }, makeEngine())
     expect(tool.name).toBe('recall')
     expect(tool.timeoutMs).toBe(10_000)
     // defineTool validates args before classifying, so only a valid call opts in.
@@ -129,7 +144,7 @@ describe('recall tool definition', () => {
 describe('recall execute — cross-session path', () => {
   it('scopes to the calling agent cwd by default', async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found the resume template')] })
-    const out = await run(createRecallTool(undefined, engine), { query: 'resume template' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: 'resume template' }, '/proj')
 
     expect(engine.sessionsRequests).toHaveLength(1)
     expect(engine.sessionsRequests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/proj'] }])
@@ -144,7 +159,7 @@ describe('recall execute — cross-session path', () => {
 
   it('drops the cwd filter only when all_projects is requested and allowed', async () => {
     const engine = makeEngine({ items: [] })
-    const tool = createRecallTool(undefined, engine)
+    const tool = createRecallTool({ callerTreeOnly: false }, engine)
 
     await run(tool, { query: 'x', all_projects: true }, '/proj')
     expect(engine.sessionsRequests[0]?.sessionFilters).toBeUndefined()
@@ -156,13 +171,13 @@ describe('recall execute — cross-session path', () => {
 
   it('omits the filter when the agent has no cwd', async () => {
     const engine = makeEngine({ items: [] })
-    await run(createRecallTool(undefined, engine), { query: 'x' }, undefined)
+    await run(createRecallTool({ callerTreeOnly: false }, engine), { query: 'x' }, undefined)
     expect(engine.sessionsRequests[0]?.sessionFilters).toBeUndefined()
   })
 
   it('clamps limit into the configured max and forwards the cursor', async () => {
     const engine = makeEngine({ items: [], nextCursor: 'next-1' as never })
-    const tool = createRecallTool({ defaultLimit: 3, maxLimit: 7 }, engine)
+    const tool = createRecallTool({ callerTreeOnly: false,  defaultLimit: 3, maxLimit: 7  }, engine)
     await run(tool, { query: 'x', limit: 99, cursor: 'opaque-token' })
     expect(engine.sessionsRequests[0]?.limit).toBe(7)
     expect(engine.sessionsRequests[0]?.cursor).toBe('opaque-token')
@@ -171,19 +186,19 @@ describe('recall execute — cross-session path', () => {
   it('degrades title failures to untitled rows', async () => {
     const engine = makeEngine({ items: [hit('session-b2', '/proj', 'snip')] })
     engine.titleError = new Error('title backend down')
-    const out = await run(createRecallTool(undefined, engine), { query: 'x' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: 'x' }, '/proj')
     expect(out.items[0]?.title).toBeNull()
   })
 
   it('falls back to a zero-hit hint when no session contains the CJK substring', async () => {
     const engine = makeEngine({ items: [] })
-    const out = await run(createRecallTool(undefined, engine), { query: '简历模板' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '简历模板' }, '/proj')
     expect(engine.listCalls).toBe(1)
     expect(out.items).toEqual([])
     expect(out.hint).toContain('no matches')
 
     const ascii = makeEngine({ items: [] })
-    const out2 = await run(createRecallTool(undefined, ascii), { query: 'nothing here' }, '/proj')
+    const out2 = await run(createRecallTool({ callerTreeOnly: false }, ascii), { query: 'nothing here' }, '/proj')
     expect(out2.hint).toBeNull()
     expect(ascii.listCalls).toBe(0)
   })
@@ -194,7 +209,7 @@ describe('recall execute — CJK substring fallback', () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('session-zh1', '/proj'), record('session-zh2', '/proj')]
     engine.filterResults.set('session-zh2', [doc('session-zh2', '宋体字体很好看，就用它了')])
-    const out = await run(createRecallTool(undefined, engine), { query: '字体' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '字体' }, '/proj')
 
     expect(engine.filterCalls).toEqual(['session-zh1', 'session-zh2'])
     expect(out.count).toBe(1)
@@ -207,7 +222,7 @@ describe('recall execute — CJK substring fallback', () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('session-zh', '/proj')]
     engine.filterResults.set('session-zh', [doc('session-zh', '正在调简历模板的字体间距')])
-    const out = await run(createRecallTool(undefined, engine), { query: '简历 模板' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '简历 模板' }, '/proj')
 
     expect(engine.filterArgs[0]).toEqual([{ kind: 'text', text: '简历' }, { kind: 'text', text: '模板' }])
     expect(out.count).toBe(1)
@@ -219,7 +234,7 @@ describe('recall execute — CJK substring fallback', () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('other-cwd', '/elsewhere'), record('here', '/proj')]
     engine.filterResults.set('here', [doc('here', '字体文件已下载')])
-    const out = await run(createRecallTool(undefined, engine), { query: '字体' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '字体' }, '/proj')
     expect(engine.filterCalls).toEqual(['here'])
     expect(out.items[0]?.sessionId).toBe('here')
   })
@@ -228,7 +243,7 @@ describe('recall execute — CJK substring fallback', () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('other-cwd', '/elsewhere'), record('here', '/proj')]
     engine.filterResults.set('other-cwd', [doc('other-cwd', '字体')])
-    const out = await run(createRecallTool(undefined, engine), { query: '字体', all_projects: true }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '字体', all_projects: true }, '/proj')
     expect(engine.filterCalls).toEqual(['other-cwd', 'here'])
     expect(out.items[0]?.sessionId).toBe('other-cwd')
   })
@@ -237,14 +252,14 @@ describe('recall execute — CJK substring fallback', () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('s1', '/proj')]
     engine.filterResults.set('s1', [doc('s1', '字体')])
-    const out = await run(createRecallTool(undefined, engine), { query: '字体' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '字体' }, '/proj')
     expect(out.hasMore).toBe(false)
     expect(out.nextCursor).toBeNull()
   })
 
   it('skips the fallback when disabled but still hints', async () => {
     const engine = makeEngine({ items: [] })
-    const out = await run(createRecallTool({ cjkFallback: false }, engine), { query: '字体' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false,  cjkFallback: false  }, engine), { query: '字体' }, '/proj')
     expect(engine.listCalls).toBe(0)
     expect(out.hint).toContain('no matches')
   })
@@ -252,7 +267,7 @@ describe('recall execute — CJK substring fallback', () => {
   it('recovers within-session CJK hits via filterEvents', async () => {
     const engine = makeEngine({}, { items: [], session: { createdAt: 5, cwd: '/proj' } } as unknown as SessionEventSearchPage)
     engine.filterResults.set('session-zh', [doc('session-zh', '字体已嵌入简历')])
-    const out = await run(createRecallTool(undefined, engine), { query: '字体', session_id: 'session-zh' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '字体', session_id: 'session-zh' }, '/proj')
     expect(engine.filterCalls).toEqual(['session-zh'])
     expect(out.count).toBe(1)
     expect(out.items[0]?.bestMatch.snippet).toContain('字体')
@@ -262,7 +277,7 @@ describe('recall execute — CJK substring fallback', () => {
   it('recovers a multi-word CJK query within one session', async () => {
     const engine = makeEngine({}, { items: [], session: { createdAt: 5, cwd: '/proj' } } as unknown as SessionEventSearchPage)
     engine.filterResults.set('session-zh', [doc('session-zh', '深度学习框架的选择')])
-    const out = await run(createRecallTool(undefined, engine), { query: '深度学习 框架', session_id: 'session-zh' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '深度学习 框架', session_id: 'session-zh' }, '/proj')
     expect(engine.filterArgs[0]).toEqual([{ kind: 'text', text: '深度学习' }, { kind: 'text', text: '框架' }])
     expect(out.count).toBe(1)
     expect(out.items[0]?.bestMatch.snippet).toContain('深度学习')
@@ -272,7 +287,7 @@ describe('recall execute — CJK substring fallback', () => {
 describe('recall execute — within-session path', () => {
   it('searches events and skips title enrichment', async () => {
     const engine = makeEngine()
-    const tool = createRecallTool(undefined, engine)
+    const tool = createRecallTool({ callerTreeOnly: false }, engine)
     const out = await run(tool, { query: 'font', session_id: 'session-ca62e005' }, '/proj')
 
     expect(engine.eventsRequests).toHaveLength(1)
@@ -288,21 +303,21 @@ describe('recall execute — within-session path', () => {
 describe('recall execute — scope policy (v0.4)', () => {
   it('filters denylisted cwds out of cross-session hits', async () => {
     const engine = makeEngine({ items: [hit('session-ok', '/proj', 'found it'), hit('session-no', '/secret', 'found it too')] })
-    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] }, engine), { query: 'found' }, '/proj')
+    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] , callerTreeOnly: false}, engine), { query: 'found' }, '/proj')
     expect(out.count).toBe(1)
     expect(out.items[0]?.sessionId).toBe('session-ok')
   })
 
   it('restricts to the allowlist in cross-session hits', async () => {
     const engine = makeEngine({ items: [hit('session-ok', '/proj', 'found it'), hit('session-no', '/elsewhere', 'found it too')] })
-    const out = await run(createRecallTool({ cwdAllowlist: ['/proj'] }, engine), { query: 'found' }, '/proj')
+    const out = await run(createRecallTool({ cwdAllowlist: ['/proj'] , callerTreeOnly: false}, engine), { query: 'found' }, '/proj')
     expect(out.count).toBe(1)
     expect(out.items[0]?.cwd).toBe('/proj')
   })
 
   it('blocks the current cwd itself when it is not allowed', async () => {
     const engine = makeEngine({ items: [hit('session-x', '/proj', 'found it')] })
-    const out = await run(createRecallTool({ cwdAllowlist: ['/other'] }, engine), { query: 'found' }, '/proj')
+    const out = await run(createRecallTool({ cwdAllowlist: ['/other'] , callerTreeOnly: false}, engine), { query: 'found' }, '/proj')
     expect(out.count).toBe(0)
     expect(out.hint).toContain('scope policy')
     expect(engine.sessionsRequests).toHaveLength(0)
@@ -310,7 +325,7 @@ describe('recall execute — scope policy (v0.4)', () => {
 
   it('blocks a session_id call into a denylisted cwd', async () => {
     const engine = makeEngine({}, { items: [doc('session-s', 'hello')], session: { createdAt: 5, cwd: '/secret' } } as unknown as SessionEventSearchPage)
-    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] }, engine), { query: 'hello', session_id: 'session-s' }, '/proj')
+    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] , callerTreeOnly: false}, engine), { query: 'hello', session_id: 'session-s' }, '/proj')
     expect(out.count).toBe(0)
     expect(out.hint).toContain('scope policy')
   })
@@ -319,7 +334,7 @@ describe('recall execute — scope policy (v0.4)', () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('session-keep', '/proj'), record('session-skip', '/secret')]
     engine.filterResults.set('session-keep', [doc('session-keep', '改简历字体')])
-    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] }, engine), { query: '字体' }, '/proj')
+    const out = await run(createRecallTool({ cwdDenylist: ['/secret'] , callerTreeOnly: false}, engine), { query: '字体' }, '/proj')
     expect(out.count).toBe(1)
     expect(engine.filterCalls).toEqual(['session-keep'])
   })
@@ -328,7 +343,7 @@ describe('recall execute — scope policy (v0.4)', () => {
 describe('recall execute — all_projects gate (v0.4)', () => {
   it("policy 'deny' ignores all_projects and explains it", async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
-    const out = await run(createRecallTool({ allProjectsPolicy: 'deny' }, engine), { query: 'found', all_projects: true }, '/proj')
+    const out = await run(createRecallTool({ allProjectsPolicy: 'deny' , callerTreeOnly: false}, engine), { query: 'found', all_projects: true }, '/proj')
     expect(engine.sessionsRequests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/proj'] }])
     expect(out.hint).toContain('all_projects was ignored')
   })
@@ -337,7 +352,7 @@ describe('recall execute — all_projects gate (v0.4)', () => {
     const engine = makeEngine({ items: [hit('session-a1', '/elsewhere', 'found it')] })
     const asks: string[] = []
     const out = await run(
-      createRecallTool({ allProjectsPolicy: 'confirm' }, engine, async (_exec, reason) => {
+      createRecallTool({ callerTreeOnly: false,  allProjectsPolicy: 'confirm'  }, engine, async (_exec, reason) => {
         asks.push(reason)
         return 'allowed-once'
       }),
@@ -354,7 +369,7 @@ describe('recall execute — all_projects gate (v0.4)', () => {
   it("policy 'confirm' falls back to cwd scope on rejection", async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
     const out = await run(
-      createRecallTool({ allProjectsPolicy: 'confirm' }, engine, async () => 'rejected'),
+      createRecallTool({ callerTreeOnly: false,  allProjectsPolicy: 'confirm'  }, engine, async () => 'rejected'),
       { query: 'found', all_projects: true },
       '/proj',
     )
@@ -364,7 +379,7 @@ describe('recall execute — all_projects gate (v0.4)', () => {
 
   it("policy 'confirm' fails closed without an approver", async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
-    const out = await run(createRecallTool({ allProjectsPolicy: 'confirm' }, engine), { query: 'found', all_projects: true }, '/proj')
+    const out = await run(createRecallTool({ allProjectsPolicy: 'confirm' , callerTreeOnly: false}, engine), { query: 'found', all_projects: true }, '/proj')
     expect(out.hint).toContain('not approved (unavailable)')
     expect(engine.sessionsRequests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/proj'] }])
   })
@@ -372,7 +387,7 @@ describe('recall execute — all_projects gate (v0.4)', () => {
   it("policy 'confirm' swallows a throwing approver as unavailable", async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
     const out = await run(
-      createRecallTool({ allProjectsPolicy: 'confirm' }, engine, async () => {
+      createRecallTool({ callerTreeOnly: false,  allProjectsPolicy: 'confirm'  }, engine, async () => {
         throw new Error('answerer exploded')
       }),
       { query: 'found', all_projects: true },
@@ -385,7 +400,7 @@ describe('recall execute — all_projects gate (v0.4)', () => {
 describe('recall execute — redaction (v0.4)', () => {
   it('masks secrets in snippets and reports the count', async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'used Bearer abc123def456ghi789jkl here')] })
-    const out = await run(createRecallTool({ redactionMode: 'mask' }, engine), { query: 'used' }, '/proj')
+    const out = await run(createRecallTool({ redactionMode: 'mask' , callerTreeOnly: false}, engine), { query: 'used' }, '/proj')
     expect(out.items[0]?.bestMatch.snippet).toContain('Bearer [REDACTED]')
     expect(out.items[0]?.bestMatch.snippet).not.toContain('abc123def456ghi789jkl')
     expect(out.redacted).toBeGreaterThanOrEqual(1)
@@ -396,7 +411,7 @@ describe('recall execute — redaction (v0.4)', () => {
     const engine = makeEngine({
       items: [hit('session-a1', '/proj', 'used Bearer abc123def456ghi789jkl here'), hit('session-b2', '/proj', 'again Bearer abc123def456ghi789jkl here')],
     })
-    const out = await run(createRecallTool({ redactionMode: 'hash' }, engine), { query: 'Bearer' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false,  redactionMode: 'hash'  }, engine), { query: 'Bearer' }, '/proj')
     const markers = out.items.map((item) => item.bestMatch.snippet.match(/#[0-9a-f]{8}/)?.[0])
     expect(markers[0]).toBeDefined()
     expect(markers[0]).toBe(markers[1])
@@ -405,7 +420,7 @@ describe('recall execute — redaction (v0.4)', () => {
 
   it('does nothing in off mode', async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'used Bearer abc123def456ghi789jkl here')] })
-    const out = await run(createRecallTool(undefined, engine), { query: 'used' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: 'used' }, '/proj')
     expect(out.items[0]?.bestMatch.snippet).toContain('abc123def456ghi789jkl')
     expect(out.redacted).toBe(0)
     expect(out.hint).toBeNull()
@@ -423,7 +438,7 @@ describe('recall execute — ranking & diagnostics (v0.5)', () => {
 
   it('reports fts source and no ranking by default', async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found it')] })
-    const out = await run(createRecallTool(undefined, engine), { query: 'found' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: 'found' }, '/proj')
     expect(out.diagnostics).toEqual({ source: 'fts', ranked: false })
   })
 
@@ -431,20 +446,20 @@ describe('recall execute — ranking & diagnostics (v0.5)', () => {
     const engine = makeEngine({
       items: [hitAt('session-old', '/proj', 'found it', Date.now() - 90 * DAY), hitAt('session-new', '/proj', 'found it', Date.now() - DAY)],
     })
-    const out = await run(createRecallTool({ recencyHalfLifeDays: 30 }, engine), { query: 'found' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false,  recencyHalfLifeDays: 30  }, engine), { query: 'found' }, '/proj')
     expect(out.items.map((item) => item.sessionId)).toEqual(['session-new', 'session-old'])
     expect(out.diagnostics).toMatchObject({ source: 'fts', ranked: true })
   })
 
   it('floats pinned cwd hits to the top', async () => {
     const engine = makeEngine({ items: [hitAt('session-plain', '/plain', 'found it', Date.now()), hitAt('session-pin', '/proj', 'found it', Date.now() - 300 * DAY)] })
-    const out = await run(createRecallTool({ pinnedCwds: ['/proj'] }, engine), { query: 'found' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false,  pinnedCwds: ['/proj']  }, engine), { query: 'found' }, '/proj')
     expect(out.items.map((item) => item.sessionId)).toEqual(['session-pin', 'session-plain'])
   })
 
   it('keeps backend order when ranking is configured but disabled by value', async () => {
     const engine = makeEngine({ items: [hitAt('session-old', '/proj', 'found it', Date.now() - 90 * DAY), hitAt('session-new', '/proj', 'found it', Date.now() - DAY)] })
-    const out = await run(createRecallTool({ recencyHalfLifeDays: 0 }, engine), { query: 'found' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false,  recencyHalfLifeDays: 0  }, engine), { query: 'found' }, '/proj')
     expect(out.items.map((item) => item.sessionId)).toEqual(['session-old', 'session-new'])
     expect(out.diagnostics).toEqual({ source: 'fts', ranked: false })
   })
@@ -453,7 +468,7 @@ describe('recall execute — ranking & diagnostics (v0.5)', () => {
     const engine = makeEngine({ items: [] })
     engine.listResult = [record('session-keep', '/proj'), record('session-keep2', '/proj')]
     engine.filterResults.set('session-keep', [doc('session-keep', '改简历字体')])
-    const out = await run(createRecallTool({ cjkFallbackScanMax: 10 }, engine), { query: '字体' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false,  cjkFallbackScanMax: 10  }, engine), { query: '字体' }, '/proj')
     // scanned counts VISITED sessions (both), not matching ones (one).
     expect(out.diagnostics).toEqual({ source: 'cjk-fallback', scanned: 2, scanBudget: 10, ranked: false })
     expect(out.count).toBe(1)
@@ -462,7 +477,7 @@ describe('recall execute — ranking & diagnostics (v0.5)', () => {
   it('diagnoses the within-session scan path', async () => {
     const engine = makeEngine({}, { items: [], session: { createdAt: 5, cwd: '/proj' } } as unknown as SessionEventSearchPage)
     engine.filterResults.set('session-zh', [doc('session-zh', '深度学习框架')])
-    const out = await run(createRecallTool(undefined, engine), { query: '深度学习', session_id: 'session-zh' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '深度学习', session_id: 'session-zh' }, '/proj')
     expect(out.diagnostics).toEqual({ source: 'session-scan', scanned: 1, scanBudget: 50, ranked: false })
   })
 
@@ -471,7 +486,7 @@ describe('recall execute — ranking & diagnostics (v0.5)', () => {
     ;(engine as { searchSessions: unknown }).searchSessions = async () => {
       throw Object.assign(new Error('off'), { code: 'SESSION_QUERY_SEARCH_DISABLED' })
     }
-    const out = await run(createRecallTool(undefined, engine), { query: 'x' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: 'x' }, '/proj')
     expect(out.diagnostics).toBeNull()
   })
 })
@@ -482,7 +497,7 @@ describe('recall execute — failures degrade to hint text', () => {
     ;(engine as { searchSessions: unknown }).searchSessions = async () => {
       throw error
     }
-    const out = await run(createRecallTool(undefined, engine), args, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), args, '/proj')
     return out.hint ?? ''
   }
 
@@ -501,7 +516,7 @@ describe('recall execute — failures degrade to hint text', () => {
     ;(engine as { searchEvents: unknown }).searchEvents = async () => {
       throw Object.assign(new Error('missing'), { code: 'SESSION_QUERY_SESSION_NOT_FOUND' })
     }
-    const out = await run(createRecallTool(undefined, engine), { query: 'x', session_id: 'nope' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: 'x', session_id: 'nope' }, '/proj')
     expect(out.hint).toContain('no session with that session_id')
   })
 
@@ -512,8 +527,64 @@ describe('recall execute — failures degrade to hint text', () => {
 
   it('rejects an empty query before touching the engine', async () => {
     const engine = makeEngine()
-    const out = await run(createRecallTool(undefined, engine), { query: '   ' }, '/proj')
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '   ' }, '/proj')
     expect(out.hint).toContain('non-empty')
     expect(engine.sessionsRequests).toHaveLength(0)
+  })
+})
+
+describe('caller authorization', () => {
+  it('filters cross-session results to the caller lineage', async () => {
+    const engine = makeEngine({ items: [
+      hit('caller-session-1', '/proj', 'my own session'),
+      hit('session-outside', '/proj', 'sibling agent session'),
+    ] })
+    // Set lineage: only caller + its descendants
+    engine.lineageTraceResult = {
+      target: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+      ancestors: [],
+      descendants: [],
+      complete: true,
+      root: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+    } as unknown as SessionLineageTrace
+
+    const tool = createRecallTool(undefined, engine)
+    const result = await tool.execute({ query: 'session' }, makeExec('/proj', 'caller-session-1')) as RecallResult
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]!.sessionId).toBe('caller-session-1')
+  })
+
+  it('blocks a session_id outside the caller lineage', async () => {
+    const engine = makeEngine()
+    engine.lineageTraceResult = {
+      target: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+      ancestors: [],
+      descendants: [],
+      complete: true,
+      root: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+    } as unknown as SessionLineageTrace
+
+    const tool = createRecallTool(undefined, engine)
+    const result = await tool.execute({ query: 'x', session_id: 'session-outside' }, makeExec('/proj', 'caller-session-1')) as RecallResult
+    expect(result.items).toHaveLength(0)
+    expect(result.hint).toContain('outside your conversation lineage')
+  })
+
+  it('allows cross-tree access when callerTreeOnly is false', async () => {
+    const engine = makeEngine({ items: [
+      hit('session-caller', '/proj', 'A'),
+      hit('session-outside', '/proj', 'B'),
+    ] })
+    engine.lineageTraceResult = {
+      target: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+      ancestors: [],
+      descendants: [],
+      complete: true,
+      root: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+    } as unknown as SessionLineageTrace
+
+    const tool = createRecallTool({ callerTreeOnly: false }, engine)
+    const result = await tool.execute({ query: 'session' }, makeExec('/proj', 'caller-session-1')) as RecallResult
+    expect(result.items).toHaveLength(2)
   })
 })

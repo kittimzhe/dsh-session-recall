@@ -26,12 +26,28 @@ import type {
   SessionTitleObservationResult,
 } from '@deepseek-ai/dsh-session-query'
 import { SessionSearchCursor as brandCursor } from '@deepseek-ai/dsh-session-query'
+import type { SessionLineageTrace, SessionLineageNode } from '@deepseek-ai/dsh-session-query'
 import { SessionId as brandSessionId, type SessionId } from '@deepseek-ai/dsh-session'
 import type { NormalizedRecallConfig, RecallConfig } from './config.ts'
 import { cwdAllowed, normalizeRecallConfig } from './config.ts'
 import { redactText } from './redact.ts'
 import { rankItems, rankingActive } from './rank.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
+
+/** Walk a lineage trace and collect every session id in the tree. */
+function collectLineageIds(trace: SessionLineageTrace): Set<string> {
+  const ids = new Set<string>()
+  ids.add(trace.target.header.id)
+  for (const ancestor of trace.ancestors) ids.add(ancestor.header.id)
+  const walk = (nodes: readonly SessionLineageNode[]): void => {
+    for (const node of nodes) {
+      ids.add(node.session.header.id)
+      walk(node.descendants)
+    }
+  }
+  walk(trace.descendants)
+  return ids
+}
 import type { RecallArgs, RecallDiagnostics, RecallItem, RecallResult } from './types.ts'
 import { clamp, hasCJK, id8, normalizeQuery, snippetAround, splitTerms } from './util.ts'
 
@@ -42,7 +58,11 @@ export interface RecallQueryEngine {
   readTitleSnapshots(sessionIds: readonly string[], signal?: AbortSignal): Promise<SessionTitleObservationResult[]>
   listSessions(signal?: AbortSignal): Promise<SessionRecord[]>
   filterEvents(sessionId: SessionId, filters: readonly SessionEventResultFilter[]): Promise<SessionEventSearchDocument[]>
+  /** Trace the caller's session lineage for caller-authorization gating. */
+  traceSession(sessionId: SessionId, signal?: AbortSignal): Promise<SessionLineageTrace>
 }
+/** Lineage tracing result (structural import from session-query). */
+export type { SessionLineageTrace }
 
 export const RECALL_TOOL_DESCRIPTION = [
   'Search the FULL TEXT of past and current session transcripts on this machine (your own conversation history with this user).',
@@ -340,6 +360,18 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
 
       const limit = clamp(Math.trunc(args.limit ?? cfg.defaultLimit), 1, cfg.maxLimit)
       const agentCwd = exec.agent?.session.header?.cwd ?? null
+      const callerSessionId = exec.agent?.session?.id
+
+      // ── caller authorization: restrict to the calling agent's lineage tree ──
+      let allowedIds: Set<string> | null = null
+      if (cfg.callerTreeOnly && callerSessionId != null) {
+        try {
+          const trace = await engine.traceSession(brandSessionId(callerSessionId), exec.signal)
+          allowedIds = collectLineageIds(trace)
+        } catch {
+          // Degrade: if lineage tracing fails, allow everything (fail-open).
+        }
+      }
 
       const scopeHints: string[] = []
       let wantAll = false
@@ -377,6 +409,19 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
             { sessionId, query, limit, cursor: brand(args.cursor) },
             { signal: exec.signal },
           )
+          if (allowedIds != null && !allowedIds.has(args.session_id)) {
+            return {
+              query,
+              scope,
+              count: 0,
+              hasMore: false,
+              items: [],
+              nextCursor: null,
+              hint: 'that session is outside your conversation lineage. Search without session_id to find sessions in your own tree, or ask the user to disable callerTreeOnly.',
+              redacted: 0,
+              diagnostics: null,
+            }
+          }
           if (!cwdAllowed(page.session.cwd ?? null, cfg)) {
             return {
               query,
@@ -435,6 +480,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
         const rankingOptions = { recencyHalfLifeDays: cfg.recencyHalfLifeDays, pinnedCwds: cfg.pinnedCwds }
         const ranked = rankingActive(rankingOptions)
         let items = rankItems(toItems(page.items, titles).filter((item) => cwdAllowed(item.cwd, cfg)), rankingOptions)
+        if (allowedIds != null) items = items.filter((item) => allowedIds!.has(item.sessionId))
         let hint: string | null = null
         let fallbackRan = false
         let diagnostics: RecallDiagnostics = { source: 'fts', ranked }
@@ -442,7 +488,12 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
           fallbackRan = true
           const scan = await cjkScanSessions(engine, query, agentCwd, wantAll, cfg, cfg.cjkFallbackScanMax, limit, exec.signal)
           const scanTitles = await titlesFor(engine, scan.items.map((item) => item.sessionId), exec.signal)
-          items = rankItems(scan.items.map((item) => ({ ...item, title: scanTitles.get(item.sessionId) ?? null })), rankingOptions)
+          items = rankItems(
+            scan.items
+              .filter((item) => allowedIds == null || allowedIds.has(item.sessionId))
+              .map((item) => ({ ...item, title: scanTitles.get(item.sessionId) ?? null })),
+            rankingOptions,
+          )
           diagnostics = { source: 'cjk-fallback', scanned: scan.scanned, scanBudget: scan.budget, ranked }
           hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)
         } else if (items.length === 0) {

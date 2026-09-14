@@ -35,6 +35,12 @@ export interface RecallConfig {
   recencyHalfLifeDays?: number
   /** Sessions started in these project directories rank first. Default: none. */
   pinnedCwds?: readonly string[]
+  /**
+   * Restrict recall results to sessions in the calling agent's own lineage
+   * (ancestors + self + descendants). Default `true` — other agents in the
+   * same project are invisible unless this is set to `false`.
+   */
+  callerTreeOnly?: boolean
 }
 
 /** Validated, fully defaulted configuration. */
@@ -51,6 +57,7 @@ export interface NormalizedRecallConfig {
   readonly allProjectsPolicy: AllProjectsPolicy
   readonly recencyHalfLifeDays: number | undefined
   readonly pinnedCwds: readonly string[]
+  readonly callerTreeOnly: boolean
 }
 
 export const RECALL_DEFAULT_LIMIT_MAX = 10
@@ -92,6 +99,7 @@ export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallCo
         ? Math.min(3650, Math.trunc(config.recencyHalfLifeDays))
         : undefined,
     pinnedCwds: stringList(config?.pinnedCwds),
+    callerTreeOnly: config?.callerTreeOnly !== false,
   }
 }
 

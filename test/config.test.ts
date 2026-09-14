@@ -16,6 +16,7 @@ describe('normalizeRecallConfig', () => {
       allProjectsPolicy: 'allow',
       recencyHalfLifeDays: undefined,
       pinnedCwds: [],
+      callerTreeOnly: true,
     })
   })
 
@@ -33,6 +34,7 @@ describe('normalizeRecallConfig', () => {
       allProjectsPolicy: 'allow',
       recencyHalfLifeDays: undefined,
       pinnedCwds: [],
+      callerTreeOnly: true,
     })
   })
 
