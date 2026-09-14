@@ -49,6 +49,7 @@ export const RECALL_TOOL_DESCRIPTION = [
   'Use it when the user refers to earlier work ("that bug we fixed last week", "the font we chose for my resume") or when prior context was compacted away.',
   'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to a substring scan in which every whitespace-separated term must match. Returns the best-matching event snippet per session plus the session id.',
   'Then use the read tool on files, or ask the user, to go deeper — this tool only points at history, it does not resume sessions.',
+  'To save a full evidence report of a hit session, call the transcript_export tool (from dsh-session-export) with its sessionId when available.',
   'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere (the deployment may ignore it or require user approval).',
   'When the deployment enables redaction, secret-looking text in snippets appears as [REDACTED] or a #hash marker — treat it as removed; do not try to reconstruct or echo it.',
   'The first search after startup may be slow while the index builds.',

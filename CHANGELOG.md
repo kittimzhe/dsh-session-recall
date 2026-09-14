@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 — 2026-09-14
+
+- Tool description now points at the evidence handoff: call `transcript_export` (from dsh-session-export, when composed) with a hit sessionId to save a full report. No code changes.
+
 ## 0.5.0 — 2026-09-14
 
 Ranking controls + query diagnostics: the retrieval layer explains itself.
