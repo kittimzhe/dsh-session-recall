@@ -61,4 +61,10 @@ export interface RecallArgs {
   all_projects?: boolean
   limit?: number
   cursor?: string
+  /** Only return sessions/entries newer than this many days. */
+  since_days?: number
+  /** Only return tool-related events whose tool name matches one of these (substring, case-insensitive). */
+  tools?: readonly string[]
+  /** Only return failed tool calls (tool results carrying an error). */
+  errors_only?: boolean
 }

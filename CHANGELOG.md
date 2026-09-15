@@ -1,3 +1,13 @@
+## 0.7.0 — 2026-09-15
+
+Search dimensions: time window, tool filter, error filter.
+
+- `since_days` (int): only sessions/entries newer than N days (post-filter on createdAt/bestMatch.time).
+- `tools` (string[]): only tool events whose snippet mentions one of the given tool names (substring, case-insensitive).
+- `errors_only` (bool): only failed tool calls — tool results whose snippet carries `[error]`/`error`/`failed`.
+- Filters compose with each other and with existing scopes (cwd, all_projects, caller lineage); applied on both the single-session and cross-session paths, including the CJK fallback.
+- 4 new tests. 107/107 total, tsc clean.
+
 # Changelog
 
 ## 0.5.1 — 2026-09-14

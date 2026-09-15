@@ -21,7 +21,7 @@ If you need agent memory orchestration, use a memory framework; if you need boun
 | Capability focus | Memory frameworks | Generic transcript search | `dsh-session-recall` |
 |---|---|---|---|
 | Retrieval target | Derived memory objects | Varies by implementation | **Original session transcript events** |
-| Scope control | Framework-specific | Often coarse | **cwd-scoped default + explicit `all_projects` gate** |
+| Scope control | Framework-specific | Often coarse | **cwd-scoped default + explicit `all_projects`, `since_days`, `tools`, `errors_only` gate** |
 | CJK behavior | Framework-specific | Often tokenizer-limited | **FTS + CJK zero-hit substring fallback** |
 | Output contract | Usually framework-native | Varies | **Typed `recall` result with stable fields/hints** |
 

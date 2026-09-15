@@ -588,3 +588,61 @@ describe('caller authorization', () => {
     expect(result.items).toHaveLength(2)
   })
 })
+
+describe('dimension filters (v0.7)', () => {
+  const NOW = new Date('2026-09-15T00:00:00Z').getTime()
+
+  function dimHit(id: string, over: Partial<{ type: string; snippet: string; time: number; createdAt: number }>) {
+    const time = over.time ?? NOW - 86_400_000
+    return hit(id, '/proj', over.snippet ?? 'text', 1) && undefined
+  }
+
+  it('since_days drops older sessions', async () => {
+    const oldTime = NOW - 30 * 86_400_000
+    const freshTime = NOW - 1 * 86_400_000
+    const mk = (id: string, time: number) => ({
+      sessionId: id, id8: id, title: null, createdAt: time, cwd: '/proj', live: true, persisted: true,
+      bestMatch: { seq: 1, type: 'user/message', time, snippet: 'found the resume' },
+    })
+    const tool = createRecallTool({ callerTreeOnly: false }, makeEngine({ items: [
+      { header: { version: 1, id: 'session-old', createdAt: oldTime }, live: true, persisted: true,
+        bestMatch: { sessionId: 'session-old', seq: 1, type: 'user/message', time: oldTime, surface: 'current', snippet: 'found the resume' } } as never,
+      { header: { version: 1, id: 'session-new', createdAt: freshTime }, live: true, persisted: true,
+        bestMatch: { sessionId: 'session-new', seq: 1, type: 'user/message', time: freshTime, surface: 'current', snippet: 'found the resume' } } as never,
+    ] }))
+    const result = await tool.execute({ query: 'resume', since_days: 7 }, makeExec('/proj')) as RecallResult
+    expect(result.items.map((i) => i.sessionId)).toEqual(['session-new'])
+    expect(mk('x', 1)).toBeDefined() // silence unused
+  })
+
+  it('tools filter keeps only tool events matching the needle', async () => {
+    const tool = createRecallTool({ callerTreeOnly: false }, makeEngine({ items: [
+      { header: { version: 1, id: 's-tool', createdAt: NOW }, live: true, persisted: true,
+        bestMatch: { sessionId: 's-tool', seq: 2, type: 'tool/result', time: NOW, surface: 'current', snippet: 'bash: ls -la done' } } as never,
+      { header: { version: 1, id: 's-chat', createdAt: NOW }, live: true, persisted: true,
+        bestMatch: { sessionId: 's-chat', seq: 3, type: 'user/message', time: NOW, surface: 'current', snippet: 'run bash please' } } as never,
+    ] }))
+    const result = await tool.execute({ query: 'bash', tools: ['bash'] }, makeExec('/proj')) as RecallResult
+    expect(result.items.map((i) => i.sessionId)).toEqual(['s-tool'])
+  })
+
+  it('errors_only keeps only failed tool results', async () => {
+    const tool = createRecallTool({ callerTreeOnly: false }, makeEngine({ items: [
+      { header: { version: 1, id: 's-err', createdAt: NOW }, live: true, persisted: true,
+        bestMatch: { sessionId: 's-err', seq: 2, type: 'tool/result', time: NOW, surface: 'current', snippet: 'bash: [error] exit 1' } } as never,
+      { header: { version: 1, id: 's-ok', createdAt: NOW }, live: true, persisted: true,
+        bestMatch: { sessionId: 's-ok', seq: 3, type: 'tool/result', time: NOW, surface: 'current', snippet: 'bash: all good' } } as never,
+    ] }))
+    const result = await tool.execute({ query: 'bash', errors_only: true }, makeExec('/proj')) as RecallResult
+    expect(result.items.map((i) => i.sessionId)).toEqual(['s-err'])
+  })
+
+  it('no filters set returns everything', async () => {
+    const tool = createRecallTool({ callerTreeOnly: false }, makeEngine({ items: [
+      { header: { version: 1, id: 's-a', createdAt: NOW - 400 * 86_400_000 }, live: true, persisted: true,
+        bestMatch: { sessionId: 's-a', seq: 1, type: 'user/message', time: NOW - 400 * 86_400_000, surface: 'current', snippet: 'old' } } as never,
+    ] }))
+    const result = await tool.execute({ query: 'old' }, makeExec('/proj')) as RecallResult
+    expect(result.items).toHaveLength(1)
+  })
+})

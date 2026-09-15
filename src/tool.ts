@@ -34,6 +34,45 @@ import { redactText } from './redact.ts'
 import { rankItems, rankingActive } from './rank.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
 
+/** Whether a best-match event type is a tool result (vs user/assistant message). */
+function isToolResultType(type: string): boolean {
+  return type === 'tool/result' || type.startsWith('tool/')
+}
+
+/** Apply the dimensional post-filters (sinceDays / tools / errorsOnly) to recall items. */
+function applyDimensionFilters(
+  items: readonly RecallItem[],
+  args: RecallArgs,
+  now: number = Date.now(),
+): RecallItem[] {
+  let out: RecallItem[] = [...items]
+  if (args.since_days !== undefined && args.since_days > 0) {
+    const cutoff = now - args.since_days * 86_400_000
+    out = out.filter((item) => {
+      const t = Math.max(item.createdAt ?? 0, item.bestMatch?.time ?? 0)
+      return t >= cutoff
+    })
+  }
+  if (args.tools !== undefined && args.tools.length > 0) {
+    const needles = args.tools.map((t) => t.toLowerCase())
+    out = out.filter((item) => {
+      const type = item.bestMatch?.type ?? ''
+      if (!isToolResultType(type)) return false
+      const snippet = (item.bestMatch?.snippet ?? '').toLowerCase()
+      return needles.some((n) => snippet.includes(n))
+    })
+  }
+  if (args.errors_only === true) {
+    out = out.filter((item) => {
+      const type = item.bestMatch?.type ?? ''
+      if (type !== 'tool/result') return false
+      const snippet = item.bestMatch?.snippet ?? ''
+      return snippet.includes('[error]') || /\berror\b|\bfailed\b/i.test(snippet)
+    })
+  }
+  return out
+}
+
 /** Walk a lineage trace and collect every session id in the tree. */
 function collectLineageIds(trace: SessionLineageTrace): Set<string> {
   const ids = new Set<string>()
@@ -70,7 +109,7 @@ export const RECALL_TOOL_DESCRIPTION = [
   'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to a substring scan in which every whitespace-separated term must match. Returns the best-matching event snippet per session plus the session id.',
   'Then use the read tool on files, or ask the user, to go deeper — this tool only points at history, it does not resume sessions.',
   'To save a full evidence report of a hit session, call the transcript_export tool (from dsh-session-export) with its sessionId when available.',
-  'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere (the deployment may ignore it or require user approval).',
+  'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere (the deployment may ignore it or require user approval). Narrow further with since_days (only sessions newer than N days), tools (only tool events whose tool name matches, e.g. tools=["bash"]), or errors_only=true (only failed tool calls).',
   'When the deployment enables redaction, secret-looking text in snippets appears as [REDACTED] or a #hash marker — treat it as removed; do not try to reconstruct or echo it.',
   'The first search after startup may be slow while the index builds.',
 ].join(' ')
@@ -347,6 +386,9 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
       all_projects: { type: 'boolean', description: 'Search sessions from ALL project directories instead of only the current one. Ignored when the deployment disallows it.' },
       limit: { type: 'integer', description: `Page size, default ${cfg.defaultLimit}, at most ${cfg.maxLimit}.` },
       cursor: { type: 'string', description: 'Opaque continuation cursor from a previous recall result with hasMore=true.' },
+      since_days: { type: 'integer', description: 'Only return sessions newer than this many days (0 = no time filter).' },
+      tools: { type: 'array', items: { type: 'string' }, description: 'Only return tool events whose tool name contains one of these substrings (case-insensitive), e.g. ["bash","read"].' },
+      errors_only: { type: 'boolean', description: 'Only return failed tool calls (tool results carrying an error).' },
     },
     output: {
       schema: recallOutputSchema,
@@ -435,7 +477,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
               diagnostics: null,
             }
           }
-          let items = eventItems(page, sessionId)
+          let items = applyDimensionFilters(eventItems(page, sessionId), args)
           let hint: string | null = null
           let diagnostics: RecallDiagnostics = { source: 'fts', ranked: false }
           if (items.length === 0 && hasCJK(query) && cfg.cjkFallback) {
@@ -443,7 +485,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
             const docs = await engine.filterEvents(sessionId, filters)
             diagnostics = { source: 'session-scan', scanned: 1, scanBudget: cfg.cjkFallbackScanMax, ranked: false }
             if (docs.length > 0) {
-              items = docs.slice(0, limit).map((doc) => ({
+              items = applyDimensionFilters(docs.slice(0, limit).map((doc) => ({
                 sessionId,
                 id8: id8(sessionId),
                 title: null,
@@ -452,7 +494,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
                 live: true,
                 persisted: false,
                 bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
-              }))
+              })), args)
             }
             hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)
           } else if (items.length === 0) {
@@ -481,6 +523,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
         const ranked = rankingActive(rankingOptions)
         let items = rankItems(toItems(page.items, titles).filter((item) => cwdAllowed(item.cwd, cfg)), rankingOptions)
         if (allowedIds != null) items = items.filter((item) => allowedIds!.has(item.sessionId))
+        items = applyDimensionFilters(items, args)
         let hint: string | null = null
         let fallbackRan = false
         let diagnostics: RecallDiagnostics = { source: 'fts', ranked }
