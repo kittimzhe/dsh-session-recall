@@ -2,7 +2,7 @@
 
 English | [中文](https://github.com/kittimzhe/dsh-session-recall/blob/main/README.zh.md)
 
-[![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
+[![CI](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml/badge.svg)](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml) [![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
 
 Deterministic cross-session full-text retrieval for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): the model-facing `recall` tool lets the agent **search its own past session transcripts** — "that bug we fixed last week", "the font we chose for my resume" — through the trusted `ctx.sessionQuery` seam.
 
