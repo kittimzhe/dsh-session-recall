@@ -25,6 +25,12 @@ If you need agent memory orchestration, use a memory framework; if you need boun
 | CJK behavior | Framework-specific | Often tokenizer-limited | **FTS + CJK zero-hit substring fallback** |
 | Output contract | Usually framework-native | Varies | **Typed `recall` result with stable fields/hints** |
 
+Name & scope notes (2026-09):
+
+- This plugin is **unrelated to `dsh-recall-plugin`** — that plugin is message undo/rewind (restoring workspace and conversation to before a message was sent).
+- It **succeeds `dsh-recall`** — an earlier transcript-search plugin (last release 2026-08-21) with a similar goal; this plugin continues the line with persistent FTS5 indexing, CJK fallback, approval gates, and lineage-scoped authorization.
+- It **complements memory frameworks** such as `dsh-mnemon` (write-side memory orchestration): this plugin stays a read-only retrieval layer over original session logs and makes no writes to any memory store.
+
 ## Roadmap
 
 - **P2: evidence handoff** — one-click bridge to session export for matched sessions.
