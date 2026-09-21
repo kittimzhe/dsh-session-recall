@@ -2,9 +2,25 @@
 
 English | [中文](https://github.com/kittimzhe/dsh-session-recall/blob/main/README.zh.md)
 
-[![CI](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml/badge.svg)](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml) [![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
+[![CI](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml/badge.svg)](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml) [![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![npm downloads](https://img.shields.io/npm/dm/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
 
 Deterministic cross-session full-text retrieval for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): the model-facing `recall` tool lets the agent **search its own past session transcripts** — "that bug we fixed last week", "the font we chose for my resume" — through the trusted `ctx.sessionQuery` seam.
+
+## Quick Start
+
+**Requirements**: Node.js 20 or 22 · a DeepSeek Harness profile that mounts the `commands` and `sessionQuery` services (the shipped `web` / `agent` profiles qualify).
+
+```sh
+dsh plugin --profile web add dsh-session-recall
+```
+
+The first search builds a persistent FTS5 index automatically — no extra setup. In a session, just ask naturally:
+
+```text
+recall: which font did we pick for the resume last week?
+```
+
+Full details — GitHub install route, `cordis.patch.yml` snippet, configuration — in [Install](#install-out-of-tree-plugin) below.
 
 ## Positioning
 
@@ -137,7 +153,7 @@ Every result also carries a `diagnostics` object (v0.5): which engine produced t
 - First search after startup walks the durable logs to build the index (the tool description warns the model); subsequent searches are incremental.
 - `unicode61` matches whole tokens/phrases, not substrings — `AI` does not match `BRAID`. CJK queries that get zero full-text hits fall back to a substring scan (`filterEvents`) whose whitespace-separated terms are ANDed, so `简历 模板` also recovers `简历模板`; the hint reports when that path matched.
 - One process must own the index file (single-writer SQLite, per the official backend).
-- Matches return transcript text verbatim — there is no credential or local-path redaction. A token or sensitive path pasted into an earlier session can be surfaced by a matching search. Default cwd scoping and `allowAllProjects: false` are the only containment; fingerprinting or redaction is future work.
+- By default matches return transcript text verbatim — redaction is opt-in since v0.4 (`redactionMode: 'mask' | 'hash'`; see "Scope policy & redaction"). With `redactionMode: 'off'` (the default), a token or sensitive path pasted into an earlier session can still be surfaced by a matching search; default cwd scoping and `allowAllProjects: false` remain the containment baseline.
 
 ## Benchmark
 

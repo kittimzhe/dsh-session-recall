@@ -2,9 +2,25 @@
 
 [English](https://github.com/kittimzhe/dsh-session-recall/blob/main/README.md) | 中文
 
-[![CI](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml/badge.svg)](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml) [![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
+[![CI](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml/badge.svg)](https://github.com/kittimzhe/dsh-session-recall/actions/workflows/test.yml) [![npm version](https://img.shields.io/npm/v/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![npm downloads](https://img.shields.io/npm/dm/dsh-session-recall)](https://www.npmjs.com/package/dsh-session-recall) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
 
 DeepSeek Harness 的**确定性跨会话全文检索**插件：注册模型可调用的 `recall` 工具，让 agent 能**检索自己过往的会话原文**——"上周修的那个 bug"、"简历选的什么字体"——全部通过可信的 `ctx.sessionQuery` 缝完成。
+
+## 快速开始
+
+**环境要求**：Node.js 20 或 22 · 挂载了 `commands` 与 `sessionQuery` 服务的 DeepSeek Harness profile（官方 `web` / `agent` profile 均满足）。
+
+```sh
+dsh plugin --profile web add dsh-session-recall
+```
+
+首次搜索会自动构建持久化 FTS5 索引——无需额外步骤。会话里直接问：
+
+```text
+recall：上周给简历选的什么字体来着？
+```
+
+完整细节（GitHub 安装方式、`cordis.patch.yml` 片段、配置项）见下文「安装」一节。
 
 ## 项目定位
 
@@ -136,7 +152,7 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 - 启动后第一次搜索会扫全量日志建索引（工具描述里已警告模型）；之后增量更新。
 - `unicode61` 按完整 token/短语匹配，不支持子串——`AI` 匹配不到 `BRAID`。CJK 查询零命中时会回退到子串扫描（`filterEvents`），空格分隔的各词按 AND 语义都必须命中，因此 `简历 模板` 也能找回 `简历模板`；hint 会说明是否命中。
 - 索引文件单进程独占（官方后端的单写者 SQLite 约束）。
-- 命中结果按原文照摘，**没有任何凭据或本地路径脱敏**——更早的会话里粘贴过的 token 或敏感路径可能被检索出来。目前只有默认 cwd 收窄与 `allowAllProjects: false` 两道闸；指纹识别/脱敏是后续增强。
+- 默认情况下命中结果按原文照摘——脱敏自 v0.4 起为**可选项**（`redactionMode: 'mask' | 'hash'`，见「范围策略与脱敏」一节）。`redactionMode: 'off'`（默认）时，更早会话里粘贴过的 token 或敏感路径仍可能被检索出来；默认 cwd 收窄与 `allowAllProjects: false` 仍是基础防线。
 
 ## 基准
 
