@@ -65,5 +65,13 @@
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kittimzhe/dsh-session-recall.git"
+  },
+  "homepage": "https://github.com/kittimzhe/dsh-session-recall#readme",
+  "bugs": {
+    "url": "https://github.com/kittimzhe/dsh-session-recall/issues"
   }
 }
