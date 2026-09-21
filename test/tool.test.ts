@@ -598,8 +598,11 @@ describe('dimension filters (v0.7)', () => {
   }
 
   it('since_days drops older sessions', async () => {
-    const oldTime = NOW - 30 * 86_400_000
-    const freshTime = NOW - 1 * 86_400_000
+    // Real clock: the runtime cutoff is Date.now()-based, so a fixed base date
+    // would cross the window boundary once real time advances past it.
+    const now = Date.now()
+    const oldTime = now - 30 * 86_400_000
+    const freshTime = now - 1 * 86_400_000
     const mk = (id: string, time: number) => ({
       sessionId: id, id8: id, title: null, createdAt: time, cwd: '/proj', live: true, persisted: true,
       bestMatch: { seq: 1, type: 'user/message', time, snippet: 'found the resume' },
