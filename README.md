@@ -171,3 +171,7 @@ npm run bundle      # tsdown → lib/
 ## License
 
 [MIT](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
+
+## Community
+
+- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
