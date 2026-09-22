@@ -8,7 +8,7 @@ Deterministic cross-session full-text retrieval for [DeepSeek Harness](https://g
 
 ## Quick Start
 
-**Requirements**: Node.js 20 or 22 · a DeepSeek Harness profile that mounts the `commands` and `sessionQuery` services (the shipped `web` / `agent` profiles qualify).
+**Requirements**: Node.js 20 or 22 · a DeepSeek Harness profile that mounts the `tools` and `sessionQuery` services (the shipped `web` / `agent` profiles qualify).
 
 ```sh
 dsh plugin --profile web add dsh-session-recall

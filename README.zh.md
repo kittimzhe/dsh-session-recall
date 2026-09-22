@@ -8,7 +8,7 @@ DeepSeek Harness 的**确定性跨会话全文检索**插件：注册模型可�
 
 ## 快速开始
 
-**环境要求**：Node.js 20 或 22 · 挂载了 `commands` 与 `sessionQuery` 服务的 DeepSeek Harness profile（官方 `web` / `agent` profile 均满足）。
+**环境要求**：Node.js 20 或 22 · 挂载了 `tools` 与 `sessionQuery` 服务的 DeepSeek Harness profile（官方 `web` / `agent` profile 均满足）。
 
 ```sh
 dsh plugin --profile web add dsh-session-recall
