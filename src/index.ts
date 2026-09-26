@@ -34,11 +34,12 @@ interface ApprovalLike {
 
 /**
  * Build the optional approval seam for `allProjectsPolicy: 'confirm'`: ask
- * `ctx.approval` when the service is composed and the call carries an agent;
- * fail closed (`'unavailable'`) otherwise. Never throws.
+ * `ctx.get('approval')` when the service is composed and the call carries an agent;
+ * fail closed (`'unavailable'`) otherwise. Direct `ctx.approval` throws unless
+ * the service is declared in `inject`, and this seam is optional. Never throws.
  */
 function makeApprover(ctx: Context): RecallApprover | undefined {
-  const approval = (ctx as { approval?: ApprovalLike }).approval
+  const approval = ctx.get('approval') as ApprovalLike | undefined
   if (approval == null || typeof approval.request !== 'function') return undefined
   return async (exec: ToolRunContext, reason: string): Promise<RecallApprovalVerdict> => {
     const agent = exec.agent

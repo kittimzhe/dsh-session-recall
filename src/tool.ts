@@ -152,7 +152,8 @@ export type RecallApprovalVerdict = 'allowed-once' | 'rejected' | 'cancelled' | 
  * Optional user-approval seam for the `all_projects` gate (`allProjectsPolicy:
  * 'confirm'`). Receives the tool run context (for the agent) and a
  * human-readable reason; `'allowed-once'` is the only grant. Wired from
- * `ctx.approval` in the plugin entry; fail-closed when absent.
+ * `ctx.get('approval')` in the plugin entry (optional service, not in
+ * `inject`); fail-closed when absent.
  */
 export type RecallApprover = (exec: ToolRunContext, reason: string) => Promise<RecallApprovalVerdict>
 

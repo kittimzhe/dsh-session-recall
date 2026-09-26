@@ -1,6 +1,6 @@
 /** Native/model-facing text and UI-card projections of a validated RecallResult. */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { JsonValue } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { RecallDiagnostics, RecallResult } from './types.ts'
 import { formatDate, firstLineClipped, hasCJK } from './util.ts'
 
