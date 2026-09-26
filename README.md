@@ -184,6 +184,16 @@ npm test            # vitest run
 npm run bundle      # tsdown → lib/
 ```
 
+## Session toolchain
+
+This plugin is one of three layers over the same trusted `ctx.sessionQuery` seam:
+
+| Plugin | Layer | Answers |
+|---|---|---|
+| [`dsh-session-export`](https://www.npmjs.com/package/dsh-session-export) | Evidence | "What exactly happened in this session?" |
+| `dsh-session-recall` | Memory | "What did I do before, and where is it?" |
+| [`dsh-session-eval`](https://www.npmjs.com/package/dsh-session-eval) | Measurement | "Was that session good? Is the trend improving?" |
+
 ## License
 
 [MIT](https://github.com/kittimzhe/dsh-session-recall/blob/main/LICENSE)
