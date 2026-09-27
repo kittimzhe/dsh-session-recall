@@ -23,6 +23,8 @@ export { normalizeRecallConfig, cwdAllowed, ALL_PROJECTS_POLICIES } from './conf
 export { createRecallTool, RECALL_TOOL_DESCRIPTION } from './tool.ts'
 export type { RecallQueryEngine, RecallApprovalVerdict, RecallApprover } from './tool.ts'
 export { renderRecallText, recallContentBlocks, recallPresentationMeta, cjkZeroHitHint, cjkFallbackHint } from './render.ts'
+export { isIndexOutage, rawScanSessions, discoverSessionsRoot, RAW_SCAN_DEFAULT_MAX_SESSIONS, RAW_SCAN_MAX_SESSIONS_MAX } from './resilient.ts'
+export type { RawScanOptions, RawScanResult } from './resilient.ts'
 export { clamp, id8, formatDate, hasCJK, normalizeQuery, firstLineClipped, snippetAround } from './util.ts'
 export { redactText, normalizeRedactionMode, REDACTION_MODES } from './redact.ts'
 export type { RedactionMode } from './redact.ts'

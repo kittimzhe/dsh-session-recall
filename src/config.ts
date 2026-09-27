@@ -41,6 +41,19 @@ export interface RecallConfig {
    * same project are invisible unless this is set to `false`.
    */
   callerTreeOnly?: boolean
+  /**
+   * When the session index itself fails (`SESSION_QUERY_PERSISTENCE_FAILED`,
+   * e.g. one un-migratable artifact failing every indexed search —
+   * deepseek-harness discussion #7995), retry with a direct scan of the
+   * persisted session logs instead of failing the call. Default `true`.
+   */
+  rawScanFallback?: boolean
+  /** Max persisted sessions visited by one degraded raw scan. Default `200`. */
+  rawScanMaxSessions?: number
+  /** Wall-clock ceiling (ms) for one degraded raw scan. Default `20000`. */
+  rawScanMaxDurationMs?: number
+  /** Compressed-size ceiling (bytes) per session log in a degraded scan. Default 8 MiB. */
+  rawScanMaxSessionBytes?: number
 }
 
 /** Validated, fully defaulted configuration. */
@@ -58,6 +71,10 @@ export interface NormalizedRecallConfig {
   readonly recencyHalfLifeDays: number | undefined
   readonly pinnedCwds: readonly string[]
   readonly callerTreeOnly: boolean
+  readonly rawScanFallback: boolean
+  readonly rawScanMaxSessions: number
+  readonly rawScanMaxDurationMs: number
+  readonly rawScanMaxSessionBytes: number
 }
 
 export const RECALL_DEFAULT_LIMIT_MAX = 10
@@ -100,6 +117,10 @@ export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallCo
         : undefined,
     pinnedCwds: stringList(config?.pinnedCwds),
     callerTreeOnly: config?.callerTreeOnly !== false,
+    rawScanFallback: config?.rawScanFallback !== false,
+    rawScanMaxSessions: intIn(config?.rawScanMaxSessions, 200, 1, 2000),
+    rawScanMaxDurationMs: intIn(config?.rawScanMaxDurationMs, 20_000, 1_000, 120_000),
+    rawScanMaxSessionBytes: intIn(config?.rawScanMaxSessionBytes, 8 * 1024 * 1024, 262_144, 64 * 1024 * 1024),
   }
 }
 

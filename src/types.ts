@@ -30,7 +30,7 @@ export interface RecallScope {
 /** How the matches in a result were produced (v0.5 diagnostics). */
 export interface RecallDiagnostics {
   /** Which engine produced the matches. */
-  readonly source: 'fts' | 'cjk-fallback' | 'session-scan'
+  readonly source: 'fts' | 'cjk-fallback' | 'session-scan' | 'raw-scan'
   /** Sessions visited by the fallback scan, when it ran. */
   readonly scanned?: number
   /** The fallback scan budget (`cjkFallbackScanMax`), when a scan ran. */

@@ -125,7 +125,21 @@ Plugin row config (all optional):
     cjkHint: true           # explain CJK zero-hit results
     cjkFallback: true       # CJK zero-hit → exact substring scan over session text
     cjkFallbackScanMax: 50  # max sessions scanned per cross-session fallback (1..500)
+    rawScanFallback: true     # degraded mode: when the index itself fails, scan logs directly
+    rawScanMaxSessions: 200   # degraded scan budget: sessions visited (1..2000)
+    rawScanMaxDurationMs: 20000  # degraded scan wall-clock ceiling (1000..120000)
+    rawScanMaxSessionBytes: 8388608  # per-log compressed-size cap in the degraded scan
 ```
+
+## Degraded mode (v0.7.5)
+
+When the session index itself fails — most notably `SESSION_QUERY_PERSISTENCE_FAILED`, where a single un-migratable session artifact fails *every* indexed search (the v0→v1 migration gate rejecting `subagent/descriptor` version 2, [deepseek-harness discussion #7995](https://github.com/deepseek-ai/deepseek-harness/discussions/7995)) — the `recall` tool degrades to scanning the persisted session logs directly (`$DSH_HOME/sessions`) instead of failing the call:
+
+- **Tolerant by construction**: each log is decompressed with a bundled pure-JS zstd decoder and parsed line by line; a corrupt line or unreadable log is skipped and counted, never fatal. The exact session shape that bricks the upstream migration is searchable here.
+- **Affordable**: session headers are read through a streaming decompressor (milliseconds each) so cwd/time/session_id scope filters run before any full decompression; a byte-level term prefilter avoids line parsing for non-matching logs; a wall-clock budget (default 20s) and a per-log size cap (default 8 MiB compressed — pure-JS zstd decompresses ~2 MB/s) keep the tool responsive. Sessions are visited newest-first, and when the budget trips, the result says which portion of the store was covered.
+- **Honest**: results carry `diagnostics.source: "raw-scan"` and a hint explaining the degraded provenance, unreadable/oversized skips, and partial coverage. Live (not yet persisted) sessions are not included.
+
+Disable with `rawScanFallback: false` to restore the pre-v0.7.5 fail-fast behavior.
 
 ## Failure behavior
 

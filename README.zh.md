@@ -124,7 +124,21 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
     cjkHint: true           # CJK 零命中的提示开关
     cjkFallback: true       # CJK 零命中 → 对会话文本做精确子串扫描
     cjkFallbackScanMax: 50  # 跨会话回退时最多扫描的会话数（1..500）
+    rawScanFallback: true        # 降级模式：索引整体故障时直扫会话日志
+    rawScanMaxSessions: 200      # 降级扫描预算：访问会话数（1..2000）
+    rawScanMaxDurationMs: 20000  # 降级扫描墙钟上限（1000..120000）
+    rawScanMaxSessionBytes: 8388608  # 降级扫描单日志压缩体积上限（字节）
 ```
+
+## 降级模式（v0.7.5）
+
+当会话索引本身故障——最典型的是 `SESSION_QUERY_PERSISTENCE_FAILED`：一个无法迁移的会话工件让**所有**索引查询全部失败（v0→v1 迁移闸门拒绝 `subagent/descriptor` version 2，见 [deepseek-harness 讨论 #7995](https://github.com/deepseek-ai/deepseek-harness/discussions/7995)）——`recall` 工具降级为直接扫描持久化会话日志（`$DSH_HOME/sessions`），而不是让整个调用失败：
+
+- **天生容错**：日志用内置的纯 JS zstd 解码器解压、逐行解析；坏行或不可读日志跳过并计数，绝不致命。上游迁移器认不了的那个会话形状，在这里照样可搜。
+- **算得起**：会话 header 走流式解压（毫秒级），cwd/时间/session_id 过滤先于任何全量解压；字节级关键词预过滤让不含关键词的日志免去逐行解析；墙钟预算（默认 20 秒）与单日志体积上限（默认压缩后 8 MiB——纯 JS zstd 解压约 2 MB/s）保证工具响应性。会话按最新优先访问，预算用尽时结果会说明覆盖了哪部分。
+- **诚实**：结果带 `diagnostics.source: "raw-scan"` 和降级来源提示（不可读/超限跳过数、部分覆盖说明）。未落盘的活跃会话不包含在内。
+
+设 `rawScanFallback: false` 可恢复 v0.7.5 之前的快速失败行为。
 
 ## 失败行为
 

@@ -17,6 +17,10 @@ describe('normalizeRecallConfig', () => {
       recencyHalfLifeDays: undefined,
       pinnedCwds: [],
       callerTreeOnly: true,
+      rawScanFallback: true,
+      rawScanMaxSessions: 200,
+      rawScanMaxDurationMs: 20000,
+      rawScanMaxSessionBytes: 8388608,
     })
   })
 
@@ -35,6 +39,10 @@ describe('normalizeRecallConfig', () => {
       recencyHalfLifeDays: undefined,
       pinnedCwds: [],
       callerTreeOnly: true,
+      rawScanFallback: true,
+      rawScanMaxSessions: 200,
+      rawScanMaxDurationMs: 20000,
+      rawScanMaxSessionBytes: 8388608,
     })
   })
 

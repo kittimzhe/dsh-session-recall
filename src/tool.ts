@@ -28,6 +28,7 @@ import type {
 import { SessionSearchCursor as brandCursor } from '@deepseek-ai/dsh-session-query'
 import type { SessionLineageTrace, SessionLineageNode } from '@deepseek-ai/dsh-session-query'
 import { SessionId as brandSessionId, type SessionId } from '@deepseek-ai/dsh-session'
+import { discoverSessionsRoot, isIndexOutage, rawScanSessions } from './resilient.ts'
 import type { NormalizedRecallConfig, RecallConfig } from './config.ts'
 import { cwdAllowed, normalizeRecallConfig } from './config.ts'
 import { redactText } from './redact.ts'
@@ -325,7 +326,7 @@ const recallOutputSchema = {
           type: 'object',
           additionalProperties: false,
           properties: {
-            source: { type: 'string', enum: ['fts', 'cjk-fallback', 'session-scan'] },
+            source: { type: 'string', enum: ['fts', 'cjk-fallback', 'session-scan', 'raw-scan'] },
             scanned: { type: 'integer' },
             scanBudget: { type: 'integer' },
             ranked: { type: 'boolean' },
@@ -379,7 +380,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
   return defineTool({
     name: 'recall',
     description: RECALL_TOOL_DESCRIPTION,
-    timeoutMs: 10_000,
+    timeoutMs: 30_000,
     isConcurrencySafe: () => true,
     parameters: {
       query: { type: 'string', required: true, description: 'Literal phrase to search for in past transcript text (word/phrase match, not regex; FTS operators are treated as data).' },
@@ -556,6 +557,47 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
           diagnostics,
         }
       } catch (error) {
+        if (cfg.rawScanFallback && isIndexOutage(error)) {
+          // Degraded mode (discussion #7995 family): the index itself failed —
+          // one un-migratable artifact kills every indexed search — so retry
+          // against the persisted logs directly instead of failing the call.
+          try {
+            const scan = await rawScanSessions({
+              root: discoverSessionsRoot(),
+              query,
+              cwd: agentCwd,
+              allProjects: wantAll,
+              sessionId: args.session_id ?? null,
+              sinceDays: args.since_days ?? 0,
+              tools: args.tools ?? null,
+              errorsOnly: args.errors_only === true,
+              limit,
+              maxSessions: cfg.rawScanMaxSessions,
+              maxDurationMs: cfg.rawScanMaxDurationMs,
+              maxSessionBytes: cfg.rawScanMaxSessionBytes,
+            })
+            let scanItems = scan.items.filter((item) => cwdAllowed(item.cwd, cfg))
+            if (allowedIds != null) scanItems = scanItems.filter((item) => allowedIds!.has(item.sessionId))
+            scanItems = scanItems.slice(0, limit)
+            const red = applyRedaction(scanItems)
+            return {
+              query,
+              scope,
+              count: red.items.length,
+              hasMore: false,
+              items: red.items,
+              nextCursor: null,
+              hint: joinHints(
+                `degraded mode: the session index is unavailable (${errCode(error) ?? 'persistence failure'}), so recall scanned ${scan.scanned} persisted session log(s) directly — order is by session recency, live sessions are not included${scan.unreadable > 0 ? `, ${scan.unreadable} unreadable log(s) were skipped` : ''}${scan.skippedOversized > 0 ? `, ${scan.skippedOversized} oversized log(s) beyond rawScanMaxSessionBytes were skipped` : ''}${scan.coveredAll ? '' : `, and the wall-clock budget stopped the pass after the newest ${scan.scanned} of ${scan.totalCandidates} sessions — narrow the scope (since_days, session_id) or raise rawScanMaxDurationMs to reach older history`}.`,
+                red.hint,
+              ),
+              redacted: red.redacted,
+              diagnostics: { source: 'raw-scan', scanned: scan.scanned, scanBudget: scan.budget, ranked: false },
+            }
+          } catch {
+            // the degraded scan failed too — report the original error below
+          }
+        }
         return recallError(query, error)
       }
     },

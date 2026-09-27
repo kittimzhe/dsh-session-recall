@@ -110,7 +110,7 @@ describe('recall tool definition', () => {
   it('declares the name, timeout, concurrency, and schema-compatible output', () => {
     const tool = createRecallTool({ callerTreeOnly: false }, makeEngine())
     expect(tool.name).toBe('recall')
-    expect(tool.timeoutMs).toBe(10_000)
+    expect(tool.timeoutMs).toBe(30_000) // 10s indexed + headroom for the degraded raw scan
     // defineTool validates args before classifying, so only a valid call opts in.
     expect(tool.isConcurrencySafe?.({ query: 'x' })).toBe(true)
     expect(tool.isConcurrencySafe?.({})).not.toBe(true)
