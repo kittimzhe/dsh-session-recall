@@ -6,7 +6,7 @@
 
 DeepSeek Harness 的**确定性跨会话全文检索**插件：注册模型可调用的 `recall` 工具，让 agent 能**检索自己过往的会话原文**——"上周修的那个 bug"、"简历选的什么字体"——全部通过可信的 `ctx.sessionQuery` 缝完成。
 
-## 快速开始
+## 安装
 
 **环境要求**：Node.js 20 或 22 · 挂载了 `tools` 与 `sessionQuery` 服务的 DeepSeek Harness profile（官方 `web` / `agent` profile 均满足）。
 
@@ -14,13 +14,33 @@ DeepSeek Harness 的**确定性跨会话全文检索**插件：注册模型可�
 dsh plugin --profile web add dsh-session-recall
 ```
 
+## 试一次
+
 首次搜索会自动构建持久化 FTS5 索引——无需额外步骤。会话里直接问：
 
 ```text
 recall：上周给简历选的什么字体来着？
 ```
 
-完整细节（GitHub 安装方式、`cordis.patch.yml` 片段、配置项）见下文「安装」一节。
+工具会按会话返回最强命中——每条带会话 id、尽力补全的标题、日期与命中摘录，在 Web UI 里渲染成原生搜索卡片。
+
+## 会话工具链
+
+| 插件 | 层 | 回答的问题 |
+|---|---|---|
+| [`dsh-session-export`](https://www.npmjs.com/package/dsh-session-export) | 证据层 | "这个会话到底发生了什么？" |
+| **`dsh-session-recall`** | **记忆层** | **"我以前做过什么，在哪？"** |
+| [`dsh-session-eval`](https://www.npmjs.com/package/dsh-session-eval) | 评测层 | "刚才的会话好不好？趋势在变好吗？" |
+
+三者都通过同一个受信的 `ctx.sessionQuery` 接缝读取。
+
+## 贡献
+
+- **本地开发**：`npm install && npm run typecheck && npm test && npm run bundle`（Node 20 或 22）。
+- **源码入口**：[`src/tool.ts`](src/tool.ts)（工具契约）、[`src/rank.ts`](src/rank.ts)（新近度重排、置顶项目）、[`src/redact.ts`](src/redact.ts)（脱敏规则）、[`src/resilient.ts`](src/resilient.ts)（降级直扫）。完整源码地图见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- **当前缺口**：[#6](https://github.com/kittimzhe/dsh-session-recall/issues/6)（脱敏规则扩展）、[#7](https://github.com/kittimzhe/dsh-session-recall/issues/7)（同分排序钉死）——或浏览 [`good first issue` 标签](https://github.com/kittimzhe/dsh-session-recall/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)。
+- **路线图**：[P2：证据联动——recall 命中携带 sessionId + 转录路径（#8）](https://github.com/kittimzhe/dsh-session-recall/issues/8)，验收标准见 issue；认领前请先留言避免撞车。
+- **规矩**：行为变更必须带测试；文档必须 `README.md` 与 `README.zh.md` 同步改；版本发布由维护者执行。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 项目定位
 
@@ -46,10 +66,6 @@ recall：上周给简历选的什么字体来着？
 - 本插件与 **`dsh-recall-plugin` 无关**——那是"撤回消息"插件（把工作区与对话回退到某条消息发出之前）。
 - 本插件是 **`dsh-recall` 的后继者**——后者是更早的会话检索插件（最后更新 2026-08-21）；本插件在其方向上续写：持久 FTS5 索引、中文回退、审批闸门、谱系鉴权。
 - 本插件与 **`dsh-mnemon` 等记忆框架互补**：它们做写入侧的记忆编排；本插件保持只读检索层，只读原始会话日志，不写任何记忆存储。
-## 路线图
-
-- **P2：证据联动导出** —— 命中后可一键触发对应会话导出。
-
 ## 为什么做这个
 
 官方 `@deepseek-ai/dsh-session-query` 的 README 自己列出了缺口：
@@ -170,7 +186,7 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 
 ## 基准
 
-真机 headless profile 实测（Node 25，Apple Silicon，暖文件缓存）。
+真机 headless profile 实测（手头机器为 Node 25、Apple Silicon、暖文件缓存）——数字仅供参考，不是 CI 门槛；受支持并经 CI 测试的版本仍是 Node 20 与 22。
 
 | 语料 | |
 |---|---|

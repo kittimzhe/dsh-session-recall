@@ -6,7 +6,7 @@ English | [中文](https://github.com/kittimzhe/dsh-session-recall/blob/main/REA
 
 Deterministic cross-session full-text retrieval for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): the model-facing `recall` tool lets the agent **search its own past session transcripts** — "that bug we fixed last week", "the font we chose for my resume" — through the trusted `ctx.sessionQuery` seam.
 
-## Quick Start
+## Install
 
 **Requirements**: Node.js 20 or 22 · a DeepSeek Harness profile that mounts the `tools` and `sessionQuery` services (the shipped `web` / `agent` profiles qualify).
 
@@ -14,13 +14,51 @@ Deterministic cross-session full-text retrieval for [DeepSeek Harness](https://g
 dsh plugin --profile web add dsh-session-recall
 ```
 
+## Try it once
+
 The first search builds a persistent FTS5 index automatically — no extra setup. In a session, just ask naturally:
 
 ```text
 recall: which font did we pick for the resume last week?
 ```
 
-Full details — GitHub install route, `cordis.patch.yml` snippet, configuration — in [Install](#install-out-of-tree-plugin) below.
+The tool surfaces the best-matching event per session — each hit carries the session id, a best-effort title, the date, and a match snippet, rendered as a native search card in the Web UI.
+
+## The session toolchain
+
+| Plugin | Layer | Answers |
+|---|---|---|
+| [`dsh-session-export`](https://www.npmjs.com/package/dsh-session-export) | Evidence | "What exactly happened in this session?" |
+| **`dsh-session-recall`** | **Memory** | **"What did I do before, and where is it?"** |
+| [`dsh-session-eval`](https://www.npmjs.com/package/dsh-session-eval) | Measurement | "Was that session good? Is the trend improving?" |
+
+All three read through the same trusted `ctx.sessionQuery` seam.
+
+## Contributing
+
+- **Local dev**: `npm install && npm run typecheck && npm test && npm run bundle` (Node 20 or 22).
+- **Start in the source**: [`src/tool.ts`](src/tool.ts) (tool contract), [`src/rank.ts`](src/rank.ts) (recency re-ranking, pinned cwds), [`src/redact.ts`](src/redact.ts) (redaction patterns), [`src/resilient.ts`](src/resilient.ts) (degraded raw-scan). The full source map is in [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Open gaps**: [#6](https://github.com/kittimzhe/dsh-session-recall/issues/6) (redaction patterns), [#7](https://github.com/kittimzhe/dsh-session-recall/issues/7) (tie-break order) — or browse [issues labeled `good first issue`](https://github.com/kittimzhe/dsh-session-recall/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+- **Roadmap**: [P2: evidence handoff — expose `sessionId` + transcript path from recall hits (#8)](https://github.com/kittimzhe/dsh-session-recall/issues/8), acceptance criteria in the issue; post a comment before starting so effort is not duplicated.
+- **Rules**: behavior changes need tests; doc changes must update `README.md` and `README.zh.md` in sync; releases belong to the maintainer. Details: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## What the model gets
+
+```
+recall({ query })                        → best-matching event per session, current project only
+recall({ query, all_projects: true })    → search every session on the machine
+recall({ query, session_id })            → search the events of one session
+recall({ query, limit, cursor })         → page through results
+```
+
+Each hit carries the session id, title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Because the FTS `unicode61` tokenizer indexes an uninterrupted CJK run as a single token, a short Chinese phrase inside a longer sentence would otherwise never match the index — so a zero-hit CJK query automatically falls back to a substring scan over session text (the `sessionQuery.filterEvents` literal text clause). Every whitespace-separated term must match, so `简历 模板` still recovers `简历模板`; the hint reports when that path matched.
+
+## Scoping (the authorization gap)
+
+`sessionQuery` is trusted infrastructure — it can read every session. This tool therefore constrains each call itself:
+
+- by default, `sessionFilters: [{ kind: 'cwd', values: [<calling agent's cwd>] }]` — only sessions started in the same project directory;
+- `all_projects: true` widens the scope, and only if the deployment allows it (`allowAllProjects: false` disables the argument).
 
 ## Positioning
 
@@ -31,25 +69,6 @@ Full details — GitHub install route, `cordis.patch.yml` snippet, configuration
 - It favors deterministic behavior over "smart" but lossy memory extraction.
 
 If you need agent memory orchestration, use a memory framework; if you need bounded, auditable lookup over historical transcripts, use this plugin.
-
-## Competitive context
-
-| Capability focus | Memory frameworks | Generic transcript search | `dsh-session-recall` |
-|---|---|---|---|
-| Retrieval target | Derived memory objects | Varies by implementation | **Original session transcript events** |
-| Scope control | Framework-specific | Often coarse | **cwd-scoped default + explicit `all_projects`, `since_days`, `tools`, `errors_only` gate** |
-| CJK behavior | Framework-specific | Often tokenizer-limited | **FTS + CJK zero-hit substring fallback** |
-| Output contract | Usually framework-native | Varies | **Typed `recall` result with stable fields/hints** |
-
-Name & scope notes (2026-09):
-
-- This plugin is **unrelated to `dsh-recall-plugin`** — that plugin is message undo/rewind (restoring workspace and conversation to before a message was sent).
-- It **succeeds `dsh-recall`** — an earlier transcript-search plugin (last release 2026-08-21) with a similar goal; this plugin continues the line with persistent FTS5 indexing, CJK fallback, approval gates, and lineage-scoped authorization.
-- It **complements memory frameworks** such as `dsh-mnemon` (write-side memory orchestration): this plugin stays a read-only retrieval layer over original session logs and makes no writes to any memory store.
-
-## Roadmap
-
-- **P2: evidence handoff** — one-click bridge to session export for matched sessions.
 
 ## Why
 
@@ -69,23 +88,20 @@ And the shipped web profile mounts its SQLite FTS5 backend with `openAt: never` 
 
 Memory plugins extract structured notes with an LLM (lossy, costs tokens); `recall` searches the **original transcripts** — zero extraction, zero loss, works retroactively on day one.
 
-## What the model gets
+## Competitive context
 
-```
-recall({ query })                        → best-matching event per session, current project only
-recall({ query, all_projects: true })    → search every session on the machine
-recall({ query, session_id })            → search the events of one session
-recall({ query, limit, cursor })         → page through results
-```
+| Capability focus | Memory frameworks | Generic transcript search | `dsh-session-recall` |
+|---|---|---|---|
+| Retrieval target | Derived memory objects | Varies by implementation | **Original session transcript events** |
+| Scope control | Framework-specific | Often coarse | **cwd-scoped default + explicit `all_projects`, `since_days`, `tools`, `errors_only` gate** |
+| CJK behavior | Framework-specific | Often tokenizer-limited | **FTS + CJK zero-hit substring fallback** |
+| Output contract | Usually framework-native | Varies | **Typed `recall` result with stable fields/hints** |
 
-Each hit carries the session id, title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Because the FTS `unicode61` tokenizer indexes an uninterrupted CJK run as a single token, a short Chinese phrase inside a longer sentence would otherwise never match the index — so a zero-hit CJK query automatically falls back to a substring scan over session text (the `sessionQuery.filterEvents` literal text clause). Every whitespace-separated term must match, so `简历 模板` still recovers `简历模板`; the hint reports when that path matched.
+Name & scope notes (2026-09):
 
-## Scoping (the authorization gap)
-
-`sessionQuery` is trusted infrastructure — it can read every session. This tool therefore constrains each call itself:
-
-- by default, `sessionFilters: [{ kind: 'cwd', values: [<calling agent's cwd>] }]` — only sessions started in the same project directory;
-- `all_projects: true` widens the scope, and only if the deployment allows it (`allowAllProjects: false` disables the argument).
+- This plugin is **unrelated to `dsh-recall-plugin`** — that plugin is message undo/rewind (restoring workspace and conversation to before a message was sent).
+- It **succeeds `dsh-recall`** — an earlier transcript-search plugin (last release 2026-08-21) with a similar goal; this plugin continues the line with persistent FTS5 indexing, CJK fallback, approval gates, and lineage-scoped authorization.
+- It **complements memory frameworks** such as `dsh-mnemon` (write-side memory orchestration): this plugin stays a read-only retrieval layer over original session logs and makes no writes to any memory store.
 
 ## Install (out-of-tree plugin)
 
@@ -171,7 +187,7 @@ Every result also carries a `diagnostics` object (v0.5): which engine produced t
 
 ## Benchmark
 
-Measured on a real headless profile (Node 25, Apple Silicon, warm filesystem cache).
+Measured on a real headless profile on the machine at hand (Node 25, Apple Silicon, warm filesystem cache) — indicative numbers, not a CI gate. Supported and CI-tested Node versions remain 20 and 22.
 
 | Corpus | |
 |---|---|
@@ -197,16 +213,6 @@ npm run typecheck   # tsc --noEmit
 npm test            # vitest run
 npm run bundle      # tsdown → lib/
 ```
-
-## Session toolchain
-
-This plugin is one of three layers over the same trusted `ctx.sessionQuery` seam:
-
-| Plugin | Layer | Answers |
-|---|---|---|
-| [`dsh-session-export`](https://www.npmjs.com/package/dsh-session-export) | Evidence | "What exactly happened in this session?" |
-| `dsh-session-recall` | Memory | "What did I do before, and where is it?" |
-| [`dsh-session-eval`](https://www.npmjs.com/package/dsh-session-eval) | Measurement | "Was that session good? Is the trend improving?" |
 
 ## License
 
