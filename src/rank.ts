@@ -13,7 +13,7 @@
  * - **Session pinning** (`pinnedCwds`): hits from pinned project directories
  *   float to the top as a group, preserving their internal order.
  *
- * Sorting is stable (ties keep backend order) and per result page: the
+ * Equal scores sort by newest session, then session ID and per result page: the
  * backend pages lazily, so ranking is applied to the page in hand — a
  * documented limitation, not a global rerank.
  *
@@ -22,6 +22,7 @@
 
 /** The slice of a recall item ranking needs (structural, for testability). */
 export interface RankableItem {
+  readonly sessionId?: string
   readonly cwd: string | null
   readonly createdAt: number
   readonly bestMatch: { readonly time: number }
@@ -69,6 +70,12 @@ export function rankItems<T extends RankableItem>(items: readonly T[], options?:
   decorated.sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
     if (b.score !== a.score) return b.score - a.score
+    // Stable identifiers make score ties independent of backend input order.
+    const byCreated = b.item.createdAt - a.item.createdAt
+    if (byCreated !== 0) return byCreated
+    const aId = a.item.sessionId ?? ''
+    const bId = b.item.sessionId ?? ''
+    if (aId !== bId) return aId < bId ? -1 : 1
     return a.index - b.index
   })
   return decorated.map((entry) => entry.item)
