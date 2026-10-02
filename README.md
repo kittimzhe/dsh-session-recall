@@ -178,6 +178,8 @@ All three gates apply uniformly to cross-session hits, the CJK fallback scan, an
 
 Every result also carries a `diagnostics` object (v0.5): which engine produced the matches (`fts` / `cjk-fallback` / `session-scan`), how many sessions a fallback scan visited against its budget, and whether re-ranking was applied — so callers can tell *why* they got what they got.
 
+With ranking active, pinned projects come first, then decayed relevance. Equal scores sort by session creation time (newest first), then session ID in lexical order. Ranking remains per page; with controls disabled the backend order is preserved. Items without IDs retain input order when their score and creation time also match.
+
 ## Known limitations
 
 - First search after startup walks the durable logs to build the index (the tool description warns the model); subsequent searches are incremental.

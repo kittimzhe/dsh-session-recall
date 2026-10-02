@@ -54,11 +54,11 @@ describe('rankItems', () => {
     expect(out).toEqual([pinnedNew, pinnedOld, plain])
   })
 
-  it('breaks ties stably by original position', () => {
+  it('preserves distinct relevance weights at the same match age', () => {
     const a = item('/a', NOW - 5 * DAY)
     const b = item('/b', NOW - 5 * DAY)
     const out = rankItems([a, b], { recencyHalfLifeDays: 30, now: NOW })
-    // Equal weights: rank 1 beats rank 2 by the 1/rank relevance term alone.
+    // Distinct weights: rank 1 beats rank 2 by the 1/rank relevance term alone.
     expect(out).toEqual([a, b])
   })
 
@@ -74,5 +74,32 @@ describe('rankItems', () => {
     const fresh = item('/b', NOW - DAY)
     const out = rankItems([byCreated, fresh], { recencyHalfLifeDays: 30, now: NOW })
     expect(out).toEqual([fresh, byCreated])
+  })
+})
+
+
+describe('deterministic score ties', () => {
+  it('sorts real positive score ties by newest session', () => {
+    const older = { ...item('/a', NOW - DAY), sessionId: 'a' }
+    const newer = { ...item('/b', NOW), sessionId: 'b' }
+    // 1 * 0.5 equals (1 / 2) * 1.
+    expect(rankItems([older, newer], { recencyHalfLifeDays: 1, now: NOW })).toEqual([newer, older])
+  })
+
+  it('uses newest session then lexical ID regardless of input order when decay underflows', () => {
+    const oldMatch = NOW - 10 * DAY
+    const a = { ...item('/pinned', oldMatch), createdAt: NOW - DAY, sessionId: 'a' }
+    const b = { ...a, sessionId: 'b' }
+    const newer = { ...a, createdAt: NOW, sessionId: 'z' }
+    const unpinned = { ...newer, cwd: '/plain', createdAt: NOW + DAY, sessionId: 'plain' }
+    const input = [b, unpinned, a, newer]
+    const options = { recencyHalfLifeDays: 0.001, pinnedCwds: ['/pinned'], now: NOW }
+    const expected = [newer, a, b, unpinned]
+    const output = rankItems(input, options)
+    expect(output).toEqual(expected)
+    expect(rankItems([...input].reverse(), options)).toEqual(expected)
+    expected.forEach((entry, index) => expect(output[index]).toBe(entry))
+    expect(input).toEqual([b, unpinned, a, newer])
+    expect(rankItems(input, {})).toEqual(input)
   })
 })
