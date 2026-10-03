@@ -1,3 +1,33 @@
+## 0.7.6 — 2026-10-02
+
+Contributor-first docs release.
+
+- README (en/zh): one-liner → install → try-once → toolchain table → 6-line contributor block; config/competitive/benchmark sections moved below the fold.
+- Roadmap P2 "evidence handoff" now links #8 with acceptance criteria and a claim-first rule.
+- Benchmark clarifies Node 25 was the machine at hand; supported and CI-tested versions remain 20/22.
+- CONTRIBUTING gains a source map; docs no longer hardcode test counts.
+- CHANGELOG backfilled for 0.7.1–0.7.5 (missing entries below).
+
+## 0.7.5 — 2026-09-27
+
+Degraded raw-scan mode when the session index is down — tolerant, budgeted, honest (see README "Degraded mode").
+
+## 0.7.4 — 2026-09-26
+
+Optional approval seam via `ctx.get`; peers aligned with harness 0.1.5-rc.3.
+
+## 0.7.3 — 2026-09-22
+
+Docs fix: the requirements line — this plugin injects `tools` + `sessionQuery`, not `commands`.
+
+## 0.7.2 — 2026-09-21
+
+Governance docs (CONTRIBUTING/SECURITY/CoC), CI bundle/pack verification, quick-start docs, npm repository metadata, clock-derived test fixtures.
+
+## 0.7.1 — 2026-09-19
+
+CI workflow (typecheck + vitest, Node 20/22) with badge; docs clarifying the relationship to official plugins and near-name packages.
+
 ## 0.7.0 — 2026-09-15
 
 Search dimensions: time window, tool filter, error filter.
