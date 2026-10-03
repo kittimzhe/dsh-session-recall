@@ -36,7 +36,7 @@ All three read through the same trusted `ctx.sessionQuery` seam.
 
 ## Contributing
 
-- **Local dev**: `npm install && npm run typecheck && npm test && npm run bundle` (Node 20 or 22).
+- **Local dev**: `npm ci && npm run typecheck && npm test && npm run bundle` (Node 20 or 22).
 - **Start in the source**: [`src/tool.ts`](src/tool.ts) (tool contract), [`src/rank.ts`](src/rank.ts) (recency re-ranking, pinned cwds), [`src/redact.ts`](src/redact.ts) (redaction patterns), [`src/resilient.ts`](src/resilient.ts) (degraded raw-scan). The full source map is in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Open gaps**: [#6](https://github.com/kittimzhe/dsh-session-recall/issues/6) (redaction patterns), [#7](https://github.com/kittimzhe/dsh-session-recall/issues/7) (tie-break order) — or browse [issues labeled `good first issue`](https://github.com/kittimzhe/dsh-session-recall/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 - **Roadmap**: [P2: evidence handoff — expose `sessionId` + transcript path from recall hits (#8)](https://github.com/kittimzhe/dsh-session-recall/issues/8), acceptance criteria in the issue; post a comment before starting so effort is not duplicated.
@@ -208,7 +208,7 @@ Warm searches run sub-millisecond to ~1.5 ms against the on-disk index. Cold sta
 ## Development
 
 ```sh
-npm install
+npm ci
 npm run typecheck   # tsc --noEmit
 npm test            # vitest run
 npm run bundle      # tsdown → lib/

@@ -7,6 +7,7 @@ Contributor-first docs release.
 - Benchmark clarifies Node 25 was the machine at hand; supported and CI-tested versions remain 20/22.
 - CONTRIBUTING gains a source map; docs no longer hardcode test counts.
 - CHANGELOG backfilled for 0.7.1–0.7.5 (missing entries below).
+- README/CONTRIBUTING local-dev commands aligned on `npm ci`; README.zh.md section order synced with English; GitHub issue templates added.
 
 ## 0.7.5 — 2026-09-27
 

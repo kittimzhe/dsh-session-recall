@@ -36,53 +36,11 @@ recall：上周给简历选的什么字体来着？
 
 ## 贡献
 
-- **本地开发**：`npm install && npm run typecheck && npm test && npm run bundle`（Node 20 或 22）。
+- **本地开发**：`npm ci && npm run typecheck && npm test && npm run bundle`（Node 20 或 22）。
 - **源码入口**：[`src/tool.ts`](src/tool.ts)（工具契约）、[`src/rank.ts`](src/rank.ts)（新近度重排、置顶项目）、[`src/redact.ts`](src/redact.ts)（脱敏规则）、[`src/resilient.ts`](src/resilient.ts)（降级直扫）。完整源码地图见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - **当前缺口**：[#6](https://github.com/kittimzhe/dsh-session-recall/issues/6)（脱敏规则扩展）、[#7](https://github.com/kittimzhe/dsh-session-recall/issues/7)（同分排序钉死）——或浏览 [`good first issue` 标签](https://github.com/kittimzhe/dsh-session-recall/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)。
 - **路线图**：[P2：证据联动——recall 命中携带 sessionId + 转录路径（#8）](https://github.com/kittimzhe/dsh-session-recall/issues/8)，验收标准见 issue；认领前请先留言避免撞车。
 - **规矩**：行为变更必须带测试；文档必须 `README.md` 与 `README.zh.md` 同步改；版本发布由维护者执行。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 项目定位
-
-`dsh-session-recall` 是一个强调正确性与边界控制的**会话检索层**。
-
-- 检索对象是原始会话日志，不是二次总结内容。
-- 默认按 cwd 收敛权限范围，放宽范围必须显式声明。
-- 追求可解释、可复现的检索行为，而不是"看起来更聪明"但有损的记忆抽取。
-
-如果你要做长期记忆编排，请用记忆框架；如果你要做可审计、有权限边界的历史检索，请用本插件。
-
-## 竞品视角
-
-| 能力重心 | 记忆框架类插件 | 通用检索类插件 | `dsh-session-recall` |
-|---|---|---|---|
-| 检索对象 | 推导后的记忆结构 | 视实现而定 | **原始会话事件文本** |
-| 范围控制 | 框架内约束 | 常较粗粒度 | **默认 cwd + 显式 `all_projects` 闸门** |
-| CJK 体验 | 视实现而定 | 常受分词限制 | **FTS + CJK 零命中子串回退** |
-| 输出契约 | 框架内部格式 | 不统一 | **类型化 `recall` 结果 + 稳定 hint** |
-
-命名与边界说明（2026-09）：
-
-- 本插件与 **`dsh-recall-plugin` 无关**——那是"撤回消息"插件（把工作区与对话回退到某条消息发出之前）。
-- 本插件是 **`dsh-recall` 的后继者**——后者是更早的会话检索插件（最后更新 2026-08-21）；本插件在其方向上续写：持久 FTS5 索引、中文回退、审批闸门、谱系鉴权。
-- 本插件与 **`dsh-mnemon` 等记忆框架互补**：它们做写入侧的记忆编排；本插件保持只读检索层，只读原始会话日志，不写任何记忆存储。
-## 为什么做这个
-
-官方 `@deepseek-ai/dsh-session-query` 的 README 自己列出了缺口：
-
-> **No registries or model-facing tool** — … a model-facing tool is absent.（没有模型可调用的工具）
-> **No caller authorization** — … a model tool or UI must constrain which sessions its caller may inspect.（调用方授权留给了未来的工具层）
-
-而且官方 web profile 把 SQLite FTS5 后端配置成 `openAt: never` + 内存库——跨会话全文检索默认关闭，就算手动开启，索引也随进程退出而消失。
-
-| | 官方 web 默认 | 装本插件后 |
-|---|---|---|
-| 模型可调用的搜索工具 | 无 | **`recall`** |
-| FTS 索引 | `openAt: never`（关闭） | **开启（懒加载 `first-search`）** |
-| 索引存储 | `:memory:`（重启即失） | **持久化 `<DSH_HOME>/session-recall/index.db`** |
-| 调用方授权 | 留给调用方 | **默认按 cwd 限定当前项目，显式放宽** |
-
-记忆类插件用 LLM 提取结构化笔记（有损、费 token）；`recall` 检索的是**原始对话记录**——零提取、零损失、装完当天就能搜全部历史。
 
 ## 模型看到什么
 
@@ -101,6 +59,49 @@ recall({ query, limit, cursor })         → 翻页
 
 - 默认注入 `sessionFilters: [{ kind: 'cwd', values: [<调用方 agent 的 cwd>] }]`——只搜同一项目目录下开始的会话；
 - `all_projects: true` 才放宽到全机，且部署方可以用 `allowAllProjects: false` 直接禁用该参数。
+
+## 项目定位
+
+`dsh-session-recall` 是一个强调正确性与边界控制的**会话检索层**。
+
+- 检索对象是原始会话日志，不是二次总结内容。
+- 默认按 cwd 收敛权限范围，放宽范围必须显式声明。
+- 追求可解释、可复现的检索行为，而不是"看起来更聪明"但有损的记忆抽取。
+
+如果你要做长期记忆编排，请用记忆框架；如果你要做可审计、有权限边界的历史检索，请用本插件。
+
+## 为什么做这个
+
+官方 `@deepseek-ai/dsh-session-query` 的 README 自己列出了缺口：
+
+> **No registries or model-facing tool** — … a model-facing tool is absent.（没有模型可调用的工具）
+> **No caller authorization** — … a model tool or UI must constrain which sessions its caller may inspect.（调用方授权留给了未来的工具层）
+
+而且官方 web profile 把 SQLite FTS5 后端配置成 `openAt: never` + 内存库——跨会话全文检索默认关闭，就算手动开启，索引也随进程退出而消失。
+
+| | 官方 web 默认 | 装本插件后 |
+|---|---|---|
+| 模型可调用的搜索工具 | 无 | **`recall`** |
+| FTS 索引 | `openAt: never`（关闭） | **开启（懒加载 `first-search`）** |
+| 索引存储 | `:memory:`（重启即失） | **持久化 `<DSH_HOME>/session-recall/index.db`** |
+| 调用方授权 | 留给调用方 | **默认按 cwd 限定当前项目，显式放宽** |
+
+记忆类插件用 LLM 提取结构化笔记（有损、费 token）；`recall` 检索的是**原始对话记录**——零提取、零损失、装完当天就能搜全部历史。
+
+## 竞品视角
+
+| 能力重心 | 记忆框架类插件 | 通用检索类插件 | `dsh-session-recall` |
+|---|---|---|---|
+| 检索对象 | 推导后的记忆结构 | 视实现而定 | **原始会话事件文本** |
+| 范围控制 | 框架内约束 | 常较粗粒度 | **默认 cwd + 显式 `all_projects` 闸门** |
+| CJK 体验 | 视实现而定 | 常受分词限制 | **FTS + CJK 零命中子串回退** |
+| 输出契约 | 框架内部格式 | 不统一 | **类型化 `recall` 结果 + 稳定 hint** |
+
+命名与边界说明（2026-09）：
+
+- 本插件与 **`dsh-recall-plugin` 无关**——那是"撤回消息"插件（把工作区与对话回退到某条消息发出之前）。
+- 本插件是 **`dsh-recall` 的后继者**——后者是更早的会话检索插件（最后更新 2026-08-21）；本插件在其方向上续写：持久 FTS5 索引、中文回退、审批闸门、谱系鉴权。
+- 本插件与 **`dsh-mnemon` 等记忆框架互补**：它们做写入侧的记忆编排；本插件保持只读检索层，只读原始会话日志，不写任何记忆存储。
 
 ## 安装（out-of-tree 插件）
 
@@ -207,7 +208,7 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
 ## 开发
 
 ```sh
-npm install
+npm ci
 npm run typecheck   # tsc --noEmit
 npm test            # vitest run
 npm run bundle      # tsdown → lib/
