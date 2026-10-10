@@ -1,3 +1,10 @@
+## 0.7.8 — 2026-10-10
+
+Deterministic equal-score ordering (via #9 by varshith84).
+
+- Sessions with equal recall scores now sort by session date (newest first), then session ID (lexical), with the pre-existing index order as a stable fallback — equal-score ties no longer shuffle between runs.
+- First external contribution to land in the package.
+
 ## 0.7.7 — 2026-10-03
 
 Docs polish round (no runtime changes).

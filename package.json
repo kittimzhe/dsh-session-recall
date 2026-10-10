@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-recall",
   "description": "Deterministic cross-session transcript retrieval for DeepSeek Harness: the model-facing `recall` tool searches past session logs with explicit scope control",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "publishConfig": {
     "access": "public"
   },
