@@ -1,3 +1,10 @@
+## 0.7.9 — 2026-10-23
+
+Test-only patch: redaction coverage for AWS key ids and Slack tokens (#6).
+
+- Both shapes have been covered by the rule table since v0.4.0 (97c79ad); this release adds the missing tests — mask mode asserts `xoxb-`/`xoxa-`/`xoxp-` bodies and a fresh `AKIA…` key never appear in output, hash mode pins the deterministic marker without leaking the secret.
+- No runtime changes; the pattern set and its behavior are untouched.
+
 ## 0.7.8 — 2026-10-10
 
 Deterministic equal-score ordering (via #9 by varshith84).

@@ -63,3 +63,28 @@ describe('normalizeRedactionMode', () => {
     expect(normalizeRedactionMode(null)).toBe('off')
   })
 })
+
+describe('AWS key ids and Slack tokens (#6)', () => {
+  const slackBot = 'xoxb-' + '1234567890-'.repeat(3) + 'abcdef'
+  const slackApp = 'xoxa-' + '2345678901-'.repeat(3) + 'bcdefg'
+  const slackLegacy = 'xoxp-' + '3456789012-'.repeat(3) + 'cdefgh'
+  const awsKey = 'AKIA' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.slice(0, 16)
+
+  it('masks AWS access key ids and every Slack token family', () => {
+    const text = `bot ${slackBot} app ${slackApp} legacy ${slackLegacy} aws ${awsKey}`
+    const out = redactText(text, 'mask')
+    expect(out.count).toBeGreaterThanOrEqual(4)
+    expect(out.text).not.toContain(slackBot)
+    expect(out.text).not.toContain(slackApp)
+    expect(out.text).not.toContain(slackLegacy)
+    expect(out.text).not.toContain(awsKey)
+  })
+
+  it('hashes the same shapes deterministically without leaking them', () => {
+    const out = redactText(`bot ${slackBot} aws ${awsKey}`, 'hash')
+    expect(out.text).toMatch(/#[0-9a-f]{8}/)
+    expect(out.text).not.toContain(slackBot)
+    expect(out.text).not.toContain(awsKey)
+    expect(redactText(`bot ${slackBot}`, 'hash').text).toBe(redactText(`bot ${slackBot}`, 'hash').text)
+  })
+})
