@@ -442,6 +442,7 @@ export async function rawScanSessions(options: RawScanOptions): Promise<RawScanR
         cwd: header.cwd,
         live: false,
         persisted: true,
+        artifactPath: null,
         bestMatch: {
           seq: best.seq,
           type: best.type,

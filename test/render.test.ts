@@ -19,6 +19,7 @@ function result(overwrites: Partial<RecallResult> = {}): RecallResult {
         cwd: '/Users/me/resume',
         live: true,
         persisted: true,
+        artifactPath: null,
         bestMatch: { seq: 42, type: 'user/message', time: new Date(2026, 7, 20).getTime(), snippet: 'please fix the resume template font' },
       },
       {
@@ -29,6 +30,7 @@ function result(overwrites: Partial<RecallResult> = {}): RecallResult {
         cwd: '/Users/me/resume',
         live: false,
         persisted: true,
+        artifactPath: null,
         bestMatch: { seq: 7, type: 'assistant/message', time: new Date(2026, 7, 18).getTime(), snippet: 'the template now uses serif headings' },
       },
     ],
@@ -125,5 +127,64 @@ describe('diagnostics line (v0.5)', () => {
   it('mentions re-ranking alone', () => {
     const text = renderRecallText(result({ diagnostics: { source: 'fts', ranked: true } }))
     expect(text).toContain('Diagnostics: re-ranked')
+  })
+})
+
+
+describe('evidence handoff text projection (#8)', () => {
+  it('shows the full sessionId and the report path per hit', () => {
+    const item = {
+      sessionId: 'session-ca62e005-4274-477b-bd56-9d9508edb040',
+      id8: 'ca62e005',
+      title: '修复简历模板字体',
+      createdAt: new Date(2026, 7, 20).getTime(),
+      cwd: '/Users/me/resume',
+      live: true,
+      persisted: true,
+      artifactPath: '/Users/me/resume/dsh-transcripts/transcript-ca62e005-20261001-090000.md',
+      bestMatch: { seq: 42, type: 'user/message', time: new Date(2026, 7, 20).getTime(), snippet: 'please fix the resume template font' },
+    }
+    const result = {
+      query: 'resume',
+      scope: { cwd: '/Users/me/resume', allProjects: false, sessionId: null },
+      count: 1,
+      hasMore: false,
+      items: [item],
+      nextCursor: null,
+      hint: null,
+      redacted: 0,
+      diagnostics: null,
+    } as unknown as Parameters<typeof renderRecallText>[0]
+    const text = renderRecallText(result)
+    expect(text).toContain('session session-ca62e005-4274-477b-bd56-9d9508edb040')
+    expect(text).toContain('report /Users/me/resume/dsh-transcripts/transcript-ca62e005-20261001-090000.md')
+  })
+
+  it('omits the report segment when no artifact exists', () => {
+    const item = {
+      sessionId: 'session-e5f60712-0000-0000-0000-000000000000',
+      id8: 'e5f60712',
+      title: null,
+      createdAt: new Date(2026, 7, 18).getTime(),
+      cwd: '/Users/me/resume',
+      live: false,
+      persisted: true,
+      artifactPath: null,
+      bestMatch: { seq: 7, type: 'assistant/message', time: 0, snippet: 'ok' },
+    }
+    const result = {
+      query: 'x',
+      scope: { cwd: null, allProjects: false, sessionId: null },
+      count: 1,
+      hasMore: false,
+      items: [item],
+      nextCursor: null,
+      hint: null,
+      redacted: 0,
+      diagnostics: null,
+    } as unknown as Parameters<typeof renderRecallText>[0]
+    const text = renderRecallText(result)
+    expect(text).toContain('session session-e5f60712-0000-0000-0000-000000000000')
+    expect(text).not.toContain('report ')
   })
 })

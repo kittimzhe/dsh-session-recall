@@ -34,6 +34,8 @@ import { cwdAllowed, normalizeRecallConfig } from './config.ts'
 import { redactText } from './redact.ts'
 import { rankItems, rankingActive } from './rank.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
+import { latestExportedArtifact, type ListDir } from './artifacts.ts'
+import { readdirSync } from 'node:fs'
 
 /** Whether a best-match event type is a tool result (vs user/assistant message). */
 function isToolResultType(type: string): boolean {
@@ -109,7 +111,7 @@ export const RECALL_TOOL_DESCRIPTION = [
   'Use it when the user refers to earlier work ("that bug we fixed last week", "the font we chose for my resume") or when prior context was compacted away.',
   'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to a substring scan in which every whitespace-separated term must match. Returns the best-matching event snippet per session plus the session id.',
   'Then use the read tool on files, or ask the user, to go deeper — this tool only points at history, it does not resume sessions.',
-  'To save a full evidence report of a hit session, call the transcript_export tool (from dsh-session-export) with its sessionId when available.',
+  'Every hit carries the full sessionId plus artifactPath — the newest report dsh-session-export already wrote for that session under dsh-transcripts/ (null when none exists yet). To produce a fresh evidence report, call the transcript_export tool (from dsh-session-export) with the sessionId; to grade one, call the session_eval tool (from dsh-session-eval) with it.',
   'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere (the deployment may ignore it or require user approval). Narrow further with since_days (only sessions newer than N days), tools (only tool events whose tool name matches, e.g. tools=["bash"]), or errors_only=true (only failed tool calls).',
   'When the deployment enables redaction, secret-looking text in snippets appears as [REDACTED] or a #hash marker — treat it as removed; do not try to reconstruct or echo it.',
   'The first search after startup may be slow while the index builds.',
@@ -204,6 +206,7 @@ function toItems(hits: readonly SessionSearchHit[], titles: Map<string, string |
     cwd: hit.header.cwd ?? null,
     live: hit.live,
     persisted: hit.persisted,
+    artifactPath: null,
     bestMatch: { seq: hit.bestMatch.seq, type: hit.bestMatch.type, time: hit.bestMatch.time, snippet: hit.bestMatch.snippet },
   }))
 }
@@ -217,6 +220,7 @@ function eventItems(page: SessionEventSearchPage, sessionId: string): RecallItem
     cwd: page.session.cwd ?? null,
     live: true,
     persisted: false,
+    artifactPath: null,
     bestMatch: { seq: event.seq, type: event.type, time: event.time, snippet: event.snippet },
   }))
 }
@@ -275,6 +279,7 @@ async function cjkScanSessions(
       cwd: record.header.cwd ?? null,
       live: record.live,
       persisted: record.persisted,
+      artifactPath: null,
       bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
     })
   }
@@ -308,6 +313,7 @@ const recallOutputSchema = {
           cwd: nullableString,
           live: { type: 'boolean' },
           persisted: { type: 'boolean' },
+          artifactPath: nullableString,
           bestMatch: {
             type: 'object',
             additionalProperties: false,
@@ -341,8 +347,18 @@ const recallOutputSchema = {
  * Build the `recall` ToolDefinition around a concrete sessionQuery engine.
  * Pure construction — no registration happens here.
  */
-export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngine, approver?: RecallApprover): ToolDefinition {
+export function createRecallTool(
+  config?: RecallConfig,
+  engine?: RecallQueryEngine,
+  approver?: RecallApprover,
+  listDir: ListDir = (dir) => readdirSync(dir),
+): ToolDefinition {
   const cfg: NormalizedRecallConfig = normalizeRecallConfig(config)
+
+  /** Evidence handoff (#8): attach the newest exported artifact path per hit. */
+  function withArtifactPaths(items: readonly RecallItem[]): RecallItem[] {
+    return items.map((item) => ({ ...item, artifactPath: latestExportedArtifact(item.cwd, item.id8, listDir) }))
+  }
 
   /** Apply configured redaction to titles and snippets; report a model-facing note. */
   function applyRedaction(items: RecallItem[]): { items: RecallItem[]; redacted: number; hint: string | null } {
@@ -495,6 +511,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
                 cwd: page.session.cwd ?? null,
                 live: true,
                 persisted: false,
+                artifactPath: null,
                 bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
               })), args)
             }
@@ -502,7 +519,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
           } else if (items.length === 0) {
             hint = cjkZeroHitHint(query, true, cfg.cjkHint)
           }
-          const red = applyRedaction(items)
+          const red = applyRedaction(withArtifactPaths(items))
           return {
             query,
             scope,
@@ -544,7 +561,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
         } else if (items.length === 0) {
           hint = cjkZeroHitHint(query, true, cfg.cjkHint)
         }
-        const red = applyRedaction(items)
+        const red = applyRedaction(withArtifactPaths(items))
         return {
           query,
           scope,
@@ -579,7 +596,7 @@ export function createRecallTool(config?: RecallConfig, engine?: RecallQueryEngi
             let scanItems = scan.items.filter((item) => cwdAllowed(item.cwd, cfg))
             if (allowedIds != null) scanItems = scanItems.filter((item) => allowedIds!.has(item.sessionId))
             scanItems = scanItems.slice(0, limit)
-            const red = applyRedaction(scanItems)
+            const red = applyRedaction(withArtifactPaths(scanItems))
             return {
               query,
               scope,

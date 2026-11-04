@@ -17,6 +17,8 @@ export interface RecallItem {
   cwd: string | null
   live: boolean
   persisted: boolean
+  /** Newest dsh-session-export artifact for this session, or null (#8). */
+  artifactPath: string | null
   bestMatch: RecallBestMatch
 }
 

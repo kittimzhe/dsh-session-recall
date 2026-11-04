@@ -34,13 +34,56 @@ recall：上周给简历选的什么字体来着？
 
 三者都通过同一个受信的 `ctx.sessionQuery` 接缝读取。
 
+### 证据联动（#8）
+
+每条 recall 命中都携带另外两个插件需要的字段——不需要手工抄 id：
+
+| 字段 | 含义 |
+|---|---|
+| `sessionId` | 完整会话 id（文本投影在 `session …` 一行单独打印，紧挨短 id `id8`）。 |
+| `artifactPath` | `dsh-session-export` 已为该会话写出的最新报告路径，位于其 `dsh-transcripts/` 目录下（`transcript-<id8>-*` 报告或 `bundle-<id8>-*.zip`，取最新）。尚无导出时为 `null`——绝不伪造路径。 |
+
+实操示例——recall 找到会话，export 出证据，eval 打分：
+
+```
+recall "resume template font"
+→ 1. 修复简历模板字体 (ca62e005, 2026-08-20, live)
+     session session-ca62e005-4274-477b-bd56-9d9508edb040
+     user/message #42: please fix the resume template font
+
+/transcript --id session-ca62e005-4274-477b-bd56-9d9508edb040   ← dsh-session-export
+/eval --id session-ca62e005-4274-477b-bd56-9d9508edb040         ← dsh-session-eval
+```
+
 ## 贡献
 
 - **本地开发**：`npm ci && npm run typecheck && npm test && npm run bundle`（Node 20 或 22）。
 - **源码入口**：[`src/tool.ts`](src/tool.ts)（工具契约）、[`src/rank.ts`](src/rank.ts)（新近度重排、置顶项目）、[`src/redact.ts`](src/redact.ts)（脱敏规则）、[`src/resilient.ts`](src/resilient.ts)（降级直扫）。完整源码地图见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - **当前缺口**：[#6](https://github.com/kittimzhe/dsh-session-recall/issues/6)（脱敏规则扩展）、[#7](https://github.com/kittimzhe/dsh-session-recall/issues/7)（同分排序钉死）——或浏览 [`good first issue` 标签](https://github.com/kittimzhe/dsh-session-recall/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)。
-- **路线图**：[P2：证据联动——recall 命中携带 sessionId + 转录路径（#8）](https://github.com/kittimzhe/dsh-session-recall/issues/8)，验收标准见 issue；认领前请先留言避免撞车。
-- **规矩**：行为变更必须带测试；文档必须 `README.md` 与 `README.zh.md` 同步改；版本发布由维护者执行。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+三者都通过同一个受信的 `ctx.sessionQuery` 接缝读取。
+
+### 证据联动（#8）
+
+每条 recall 命中都携带另外两个插件需要的字段——不需要手工抄 id：
+
+| 字段 | 含义 |
+|---|---|
+| `sessionId` | 完整会话 id（文本投影在 `session …` 一行单独打印，紧挨短 id `id8`）。 |
+| `artifactPath` | `dsh-session-export` 已为该会话写出的最新报告路径，位于其 `dsh-transcripts/` 目录下（`transcript-<id8>-*` 报告或 `bundle-<id8>-*.zip`，取最新）。尚无导出时为 `null`——绝不伪造路径。 |
+
+实操示例——recall 找到会话，export 出证据，eval 打分：
+
+```
+recall "resume template font"
+→ 1. 修复简历模板字体 (ca62e005, 2026-08-20, live)
+     session session-ca62e005-4274-477b-bd56-9d9508edb040
+     user/message #42: please fix the resume template font
+
+/transcript --id session-ca62e005-4274-477b-bd56-9d9508edb040   ← dsh-session-export
+/eval --id session-ca62e005-4274-477b-bd56-9d9508edb040         ← dsh-session-eval
+```
+
+## 贡献- **规矩**：行为变更必须带测试；文档必须 `README.md` 与 `README.zh.md` 同步改；版本发布由维护者执行。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 模型看到什么
 

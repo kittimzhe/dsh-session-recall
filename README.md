@@ -34,12 +34,32 @@ The tool surfaces the best-matching event per session — each hit carries the s
 
 All three read through the same trusted `ctx.sessionQuery` seam.
 
+### Evidence handoff (#8)
+
+Every recall hit carries the fields the other two plugins need — no ids copied by hand:
+
+| Field | Meaning |
+|---|---|
+| `sessionId` | The full session id (the text projection prints it on its own `session …` line, next to the short `id8`). |
+| `artifactPath` | The newest report `dsh-session-export` already wrote for that session under its `dsh-transcripts/` directory (`transcript-<id8>-*` report or `bundle-<id8>-*.zip`, newest wins). `null` when no export exists yet — never a fabricated path. |
+
+Worked example — recall finds the session, export produces the evidence, eval grades it:
+
+```
+recall "resume template font"
+→ 1. 修复简历模板字体 (ca62e005, 2026-08-20, live)
+     session session-ca62e005-4274-477b-bd56-9d9508edb040
+     user/message #42: please fix the resume template font
+
+/transcript --id session-ca62e005-4274-477b-bd56-9d9508edb040   ← dsh-session-export
+/eval --id session-ca62e005-4274-477b-bd56-9d9508edb040         ← dsh-session-eval
+```
+
 ## Contributing
 
 - **Local dev**: `npm ci && npm run typecheck && npm test && npm run bundle` (Node 20 or 22).
 - **Start in the source**: [`src/tool.ts`](src/tool.ts) (tool contract), [`src/rank.ts`](src/rank.ts) (recency re-ranking, pinned cwds), [`src/redact.ts`](src/redact.ts) (redaction patterns), [`src/resilient.ts`](src/resilient.ts) (degraded raw-scan). The full source map is in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Open gaps**: [#6](https://github.com/kittimzhe/dsh-session-recall/issues/6) (redaction patterns), [#7](https://github.com/kittimzhe/dsh-session-recall/issues/7) (tie-break order) — or browse [issues labeled `good first issue`](https://github.com/kittimzhe/dsh-session-recall/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
-- **Roadmap**: [P2: evidence handoff — expose `sessionId` + transcript path from recall hits (#8)](https://github.com/kittimzhe/dsh-session-recall/issues/8), acceptance criteria in the issue; post a comment before starting so effort is not duplicated.
 - **Rules**: behavior changes need tests; doc changes must update `README.md` and `README.zh.md` in sync; releases belong to the maintainer. Details: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What the model gets

@@ -35,6 +35,7 @@ export function renderRecallText(result: RecallResult): string {
   } else {
     result.items.forEach((item, i) => {
       lines.push(`${i + 1}. ${sessionLabel(result, i)}`)
+      lines.push(`   session ${item.sessionId}${item.artifactPath != null ? ` · report ${item.artifactPath}` : ''}`)
       lines.push(`   ${item.bestMatch.type} #${item.bestMatch.seq}: ${firstLineClipped(item.bestMatch.snippet, SNIPPET_CHARS)}`)
     })
   }
@@ -72,6 +73,7 @@ export function recallPresentationMeta(result: RecallResult): JsonValue {
       id8: item.id8,
       label: item.title ?? `untitled ${item.id8}`,
       createdAt: item.createdAt,
+      artifactPath: item.artifactPath,
       seq: item.bestMatch.seq,
       snippet: firstLineClipped(item.bestMatch.snippet, SNIPPET_CHARS),
     })),

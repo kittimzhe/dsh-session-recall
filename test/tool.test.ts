@@ -26,6 +26,7 @@ function hit(id: string, cwd: string | undefined, snippet: string, seq = 1): Ses
     header: { version: 1, id, createdAt: new Date(2026, 7, 20).getTime(), ...(cwd != null ? { cwd } : {}) },
     live: true,
     persisted: true,
+    artifactPath: null,
     bestMatch: { sessionId: id, seq, type: 'user/message', time: new Date(2026, 7, 20).getTime(), surface: 'current', snippet },
   } as unknown as SessionSearchHit
 }
@@ -131,13 +132,56 @@ describe('recall tool definition', () => {
           cwd: null,
           live: true,
           persisted: false,
+          artifactPath: null,
           bestMatch: { seq: 1, type: 't', time: 1, snippet: 'x' },
+        },
+        {
+          sessionId: 's2',
+          id8: 's2',
+          title: null,
+          createdAt: 1,
+          cwd: null,
+          live: false,
+          persisted: true,
+          artifactPath: '/proj/dsh-transcripts/transcript-s2-20261001-090000.md',
+          bestMatch: { seq: 2, type: 't', time: 1, snippet: 'y' },
         },
       ],
       nextCursor: null,
       hint: null,
     }
     expect(validateJsonSchemaValue(tool.output.schema, sample)).toEqual([])
+  })
+
+  it('attaches the newest exported artifact path per hit (#8)', async () => {
+    const engine = makeEngine({
+      items: [hit('session-ca62e005-4274-477b-bd56-9d9508edb040', '/proj', 'resume template font')],
+    })
+    const listDir = (dir: string): string[] => {
+      expect(dir).toBe('/proj/dsh-transcripts')
+      return ['transcript-ca62e005-20260901-120000.md', 'transcript-ca62e005-20261001-090000.html']
+    }
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false }, engine, undefined, listDir),
+      { query: 'resume template' },
+      '/proj',
+    )
+    expect(out.items).toHaveLength(1)
+    expect(out.items[0]?.artifactPath).toBe('/proj/dsh-transcripts/transcript-ca62e005-20261001-090000.html')
+  })
+
+  it('carries null artifactPath when no export exists (#8)', async () => {
+    const engine = makeEngine({
+      items: [hit('session-ca62e005-4274-477b-bd56-9d9508edb040', '/proj', 'resume template font')],
+    })
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false }, engine, undefined, () => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }),
+      { query: 'resume template' },
+      '/proj',
+    )
+    expect(out.items[0]?.artifactPath).toBeNull()
   })
 })
 
