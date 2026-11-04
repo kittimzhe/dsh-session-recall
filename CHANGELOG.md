@@ -1,3 +1,12 @@
+## 0.8.0 — 2026-11-04
+
+Evidence handoff (#8): every hit is directly actionable by the other session plugins.
+
+- Each hit now carries `artifactPath` — the newest report `dsh-session-export` wrote for that session under its `dsh-transcripts/` directory (`transcript-<id8>-*` or `bundle-<id8>-*`, newest by timestamp slug wins); `null` when no export exists, never a fabricated path.
+- The text projection prints the full `sessionId` on its own `session …` line (the short `id8` stays in the label), so `/transcript --id` and `/eval --id` can be invoked without copying ids by hand; the artifact path rides the same line as `· report <path>`.
+- Ordering by timestamp slug, not whole filename — a newer `bundle-` artifact is no longer shadowed by any `transcript-` name.
+- Tool description now points at both downstream tools; README/README.zh document the fields with a worked recall → /transcript → /eval example.
+
 ## 0.7.9 — 2026-10-23
 
 Test-only patch: redaction coverage for AWS key ids and Slack tokens (#6).
