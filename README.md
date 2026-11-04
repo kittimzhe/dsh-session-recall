@@ -71,7 +71,7 @@ recall({ query, session_id })            → search the events of one session
 recall({ query, limit, cursor })         → page through results
 ```
 
-Each hit carries the session id, title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Because the FTS `unicode61` tokenizer indexes an uninterrupted CJK run as a single token, a short Chinese phrase inside a longer sentence would otherwise never match the index — so a zero-hit CJK query automatically falls back to a substring scan over session text (the `sessionQuery.filterEvents` literal text clause). Every whitespace-separated term must match, so `简历 模板` still recovers `简历模板`; the hint reports when that path matched.
+Each hit carries the full session id, the newest exported-report path when one exists (see [Evidence handoff](#evidence-handoff-8)), title (best-effort), date, and a match snippet; the result renders as a native search card in the Web UI (`SearchMatchesResultView`). Because the FTS `unicode61` tokenizer indexes an uninterrupted CJK run as a single token, a short Chinese phrase inside a longer sentence would otherwise never match the index — so a zero-hit CJK query automatically falls back to a substring scan over session text (the `sessionQuery.filterEvents` literal text clause). Every whitespace-separated term must match, so `简历 模板` still recovers `简历模板`; the hint reports when that path matched.
 
 ## Scoping (the authorization gap)
 

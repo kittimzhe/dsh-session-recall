@@ -94,7 +94,7 @@ recall({ query, session_id })            → 只搜指定会话内的事件
 recall({ query, limit, cursor })         → 翻页
 ```
 
-每条命中带会话 id、标题（尽力补全）、日期、命中摘录；结果在 Web UI 里渲染成原生搜索卡片（`SearchMatchesResultView`）。因为 FTS 的 `unicode61` 分词器会把连续中文当成一个 token，短中文短语一旦嵌在长句里就匹配不到索引——所以 CJK 查询零命中时会自动回退到对会话文本的子串扫描（走 `sessionQuery.filterEvents` 的字面文本子句），空格拆出的每个词都必须命中，因此 `简历 模板` 也能找回 `简历模板`；hint 会说明这条回退路径是否命中。
+每条命中带完整会话 id、最新导出报告路径（存在时，见[证据联动](#证据联动8)）、标题（尽力补全）、日期、命中摘录；结果在 Web UI 里渲染成原生搜索卡片（`SearchMatchesResultView`）。因为 FTS 的 `unicode61` 分词器会把连续中文当成一个 token，短中文短语一旦嵌在长句里就匹配不到索引——所以 CJK 查询零命中时会自动回退到对会话文本的子串扫描（走 `sessionQuery.filterEvents` 的字面文本子句），空格拆出的每个词都必须命中，因此 `简历 模板` 也能找回 `简历模板`；hint 会说明这条回退路径是否命中。
 
 ## 授权边界（官方明确留给工具层的责任）
 
