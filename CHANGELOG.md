@@ -1,3 +1,10 @@
+## 0.8.1 — 2026-11-05
+
+Peer-range compatibility release (no behavior change).
+
+- `@deepseek-ai/dsh-*` peers widened to `^0.1.5-rc.3 || ^0.2.0 || 0.2.2-rc.1` and `@deepseek-ai/cordis` to `^4.0.2`, ahead of the DSH 0.2.2 release train.
+- Verified against `@deepseek-ai/*@0.2.2-rc.1` in a scratch install (including the new `dsh-session-title` transitive peer): full suite 130/130 green, typecheck clean. DSH profiles remain unaffected either way (the host satisfies peers via its shadow-scoped runtime).
+
 ## 0.8.0 — 2026-11-04
 
 Evidence handoff (#8): every hit is directly actionable by the other session plugins.
