@@ -1,3 +1,9 @@
+## 0.8.2 — 2026-11-23
+
+Peer-range compatibility release (no behavior change).
+
+- `@deepseek-ai/dsh-*` peers widened to `^0.1.5-rc.3 || ^0.2.0 || >=0.2.2-rc.1`, covering the full 0.2.2 release-candidate train (rc.1–rc.5, the current `latest`) and every later 0.2.x stable. rc.2–rc.5 shipped search and chat-import features with no session-format changes, so the rc.1-validated runtime remains the baseline.
+
 ## 0.8.1 — 2026-11-05
 
 Peer-range compatibility release (no behavior change).
