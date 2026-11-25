@@ -188,3 +188,65 @@ describe('evidence handoff text projection (#8)', () => {
     expect(text).not.toContain('report ')
   })
 })
+
+describe('report freshness text projection (P1)', () => {
+  const base = {
+    sessionId: 'session-ca62e005-4274-477b-bd56-9d9508edb040',
+    id8: 'ca62e005',
+    title: '修复简历模板字体',
+    createdAt: new Date(2026, 7, 20).getTime(),
+    cwd: '/Users/me/resume',
+    live: true,
+    persisted: true,
+    bestMatch: { seq: 42, type: 'user/message', time: new Date(2026, 7, 20).getTime(), snippet: 'please fix the resume template font' },
+  }
+
+  function oneItem(over: { artifactPath: string | null; reportFreshness?: { exportedAt?: number; stale?: boolean } }): RecallResult {
+    return {
+      query: 'resume',
+      scope: { cwd: '/Users/me/resume', allProjects: false, sessionId: null },
+      count: 1,
+      hasMore: false,
+      items: [{ ...base, ...over }],
+      nextCursor: null,
+      hint: null,
+      redacted: 0,
+      diagnostics: null,
+    }
+  }
+
+  it('appends the /transcript refresh hint to the artifact line when the report is stale', () => {
+    const text = renderRecallText(oneItem({
+      artifactPath: '/Users/me/resume/dsh-transcripts/transcript-ca62e005-20260701-000000.md',
+      reportFreshness: { exportedAt: new Date(2026, 6, 1).getTime(), stale: true },
+    }))
+    expect(text).toContain(
+      'report /Users/me/resume/dsh-transcripts/transcript-ca62e005-20260701-000000.md '
+        + '(report is stale: session has newer events; re-run /transcript session-ca62e005-4274-477b-bd56-9d9508edb040 to refresh)',
+    )
+  })
+
+  it('renders fresh reports without the hint', () => {
+    const text = renderRecallText(oneItem({
+      artifactPath: '/Users/me/resume/dsh-transcripts/transcript-ca62e005-20261001-090000.md',
+      reportFreshness: { exportedAt: new Date(2026, 9, 1).getTime(), stale: false },
+    }))
+    expect(text).toContain('report /Users/me/resume/dsh-transcripts/transcript-ca62e005-20261001-090000.md')
+    expect(text).not.toContain('report is stale')
+    expect(text).not.toContain('re-run /transcript')
+  })
+
+  it('renders unknown staleness and pre-0.9 results (no field) exactly as before', () => {
+    const unknown = renderRecallText(oneItem({
+      artifactPath: '/Users/me/resume/dsh-transcripts/transcript-ca62e005-20261001-090000.md',
+      reportFreshness: { exportedAt: new Date(2026, 9, 1).getTime() },
+    }))
+    expect(unknown).not.toContain('report is stale')
+
+    const legacy = renderRecallText(oneItem({
+      artifactPath: '/Users/me/resume/dsh-transcripts/transcript-ca62e005-20261001-090000.md',
+    }))
+    expect(legacy).toContain('report /Users/me/resume/dsh-transcripts/transcript-ca62e005-20261001-090000.md')
+    expect(legacy).not.toContain('report is stale')
+  })
+})

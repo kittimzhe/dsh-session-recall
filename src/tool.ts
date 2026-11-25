@@ -34,7 +34,7 @@ import { cwdAllowed, normalizeCwdPath, normalizeRecallConfig } from './config.ts
 import { redactText } from './redact.ts'
 import { rankItems, rankingActive } from './rank.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
-import { latestExportedArtifact, type ListDir } from './artifacts.ts'
+import { defaultStatFile, latestExportedArtifactInfo, reportFreshnessField, type ListDir, type StatFile } from './artifacts.ts'
 import { readdirSync } from 'node:fs'
 
 /** Whether a best-match event type is a tool result (vs user/assistant message). */
@@ -111,7 +111,7 @@ export const RECALL_TOOL_DESCRIPTION = [
   'Use it when the user refers to earlier work ("that bug we fixed last week", "the font we chose for my resume") or when prior context was compacted away.',
   'Matches whole words/phrases for English and code identifiers; a zero-hit Chinese (CJK) query automatically falls back to a substring scan in which every whitespace-separated term must match. Returns the best-matching event snippet per session plus the session id.',
   'Then use the read tool on files, or ask the user, to go deeper — this tool only points at history, it does not resume sessions.',
-  'Every hit carries the full sessionId plus artifactPath — the newest report dsh-session-export already wrote for that session under dsh-transcripts/ (null when none exists yet). To produce a fresh evidence report, call the transcript_export tool (from dsh-session-export) with the sessionId; to grade one, call the session_eval tool (from dsh-session-eval) with it.',
+  'Every hit carries the full sessionId plus artifactPath — the newest report dsh-session-export already wrote for that session under dsh-transcripts/ (null when none exists yet). Its reportFreshness tells you how current that report is: exportedAt is the export time, and stale=true means the session demonstrably has newer events than the report covers — re-run /transcript with the sessionId to refresh it before citing it. To produce a fresh evidence report, call the transcript_export tool (from dsh-session-export) with the sessionId; to grade one, call the session_eval tool (from dsh-session-eval) with it.',
   'Scoping: by default only sessions started in the current project directory; pass all_projects=true to search everywhere (the deployment may ignore it or require user approval). Narrow further with since_days (only sessions newer than N days), tools (only tool events whose tool name matches, e.g. tools=["bash"]), or errors_only=true (only failed tool calls).',
   'When the deployment enables redaction, secret-looking text in snippets appears as [REDACTED] or a #hash marker — treat it as removed; do not try to reconstruct or echo it.',
   'The first search after startup may be slow while the index builds.',
@@ -338,6 +338,14 @@ const recallOutputSchema = {
           live: { type: 'boolean' },
           persisted: { type: 'boolean' },
           artifactPath: nullableString,
+          reportFreshness: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              exportedAt: { type: 'integer' },
+              stale: { type: 'boolean' },
+            },
+          },
           bestMatch: {
             type: 'object',
             additionalProperties: false,
@@ -377,12 +385,26 @@ export function createRecallTool(
   engine?: RecallQueryEngine,
   approver?: RecallApprover,
   listDir: ListDir = (dir) => readdirSync(dir),
+  statFile: StatFile = defaultStatFile,
 ): ToolDefinition {
   const cfg: NormalizedRecallConfig = normalizeRecallConfig(config)
 
-  /** Evidence handoff (#8): attach the newest exported artifact path per hit. */
-  function withArtifactPaths(items: readonly RecallItem[]): RecallItem[] {
-    return items.map((item) => ({ ...item, artifactPath: latestExportedArtifact(item.cwd, item.id8, listDir) }))
+  /**
+   * Evidence handoff (#8 + P1 freshness): attach the newest exported artifact
+   * per hit, plus how stale it is. `lastActivity` is the hit's best-matching
+   * event time — the only session-activity timestamp the search seam already
+   * carries on every result path (the session header exposes `createdAt`
+   * only, `listSessions` has no `lastActivity`, and probing each session's
+   * newest event would cost one extra engine round trip per hit). The best
+   * match precedes or is the session's latest activity, so `stale: true` is
+   * always a certified verdict; see `reportFreshnessField`.
+   */
+  function withArtifacts(items: readonly RecallItem[]): RecallItem[] {
+    return items.map((item) => {
+      const info = latestExportedArtifactInfo(item.cwd, item.id8, listDir, statFile)
+      const freshness = reportFreshnessField(info, item.bestMatch.time)
+      return { ...item, artifactPath: info.path, ...(freshness != null ? { reportFreshness: freshness } : {}) }
+    })
   }
 
   /** Apply configured redaction to titles and snippets; report a model-facing note. */
@@ -566,7 +588,7 @@ export function createRecallTool(
           } else if (items.length === 0) {
             hint = cjkZeroHitHint(query, true, cfg.cjkHint)
           }
-          const red = applyRedaction(withArtifactPaths(items))
+          const red = applyRedaction(withArtifacts(items))
           return {
             query,
             scope,
@@ -608,7 +630,7 @@ export function createRecallTool(
         } else if (items.length === 0) {
           hint = cjkZeroHitHint(query, true, cfg.cjkHint)
         }
-        const red = applyRedaction(withArtifactPaths(items))
+        const red = applyRedaction(withArtifacts(items))
         return {
           query,
           scope,
@@ -643,7 +665,7 @@ export function createRecallTool(
             let scanItems = scan.items.filter((item) => cwdAllowed(item.cwd, cfg))
             if (allowedIds != null) scanItems = scanItems.filter((item) => allowedIds!.has(item.sessionId))
             scanItems = scanItems.slice(0, limit)
-            const red = applyRedaction(withArtifactPaths(scanItems))
+            const red = applyRedaction(withArtifacts(scanItems))
             return {
               query,
               scope,

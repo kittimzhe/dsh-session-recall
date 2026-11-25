@@ -19,7 +19,29 @@ export interface RecallItem {
   persisted: boolean
   /** Newest dsh-session-export artifact for this session, or null (#8). */
   artifactPath: string | null
+  /**
+   * How fresh the attached report is relative to session activity (P1).
+   * Absent without a report, or when nothing could be determined; the
+   * sub-fields are optional for the same reason — undeterminable values are
+   * omitted rather than nulled, so results without the field (or without
+   * sub-fields) keep validating against the declared output schema.
+   */
+  reportFreshness?: RecallReportFreshness
   bestMatch: RecallBestMatch
+}
+
+/**
+ * Freshness of one hit's attached export report (P1). `stale: true` certifies
+ * that the session demonstrably has events newer than the report; `false` (or
+ * an omitted value) only means "no evidence of staleness" — the comparison
+ * source is the hit's best-matching event time, which is a lower bound on the
+ * session's true latest activity.
+ */
+export interface RecallReportFreshness {
+  /** Report export time, Unix epoch ms: the filename `YYYYMMDD-HHMMSS` slug (local timezone) when parseable, else the file's mtime. */
+  exportedAt?: number
+  /** True when the report predates the hit's best-matching event (`exportedAt < bestMatch.time`). */
+  stale?: boolean
 }
 
 /** How this call scoped the corpus. */

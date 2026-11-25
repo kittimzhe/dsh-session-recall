@@ -1,3 +1,13 @@
+## 0.9.0 — 2026-11-25
+
+Export-report freshness (#8 follow-up): recall now answers "how stale is the attached evidence report?", not just "does one exist" — a model that sees the staleness marker has a concrete reason to re-run `/transcript` before citing the report.
+
+- Every hit with an `artifactPath` gains optional `reportFreshness`: `exportedAt` (Unix ms — parsed from the report filename's `YYYYMMDD-HHMMSS` slug in the local timezone, falling back to the file's mtime when the slug is absent or impossible) and `stale` (`exportedAt < bestMatch.time`). `stale` compares against the hit's best-matching event time — the only per-session activity timestamp the search seam already carries on every result path (`SessionHeader` exposes `createdAt` only, `listSessions` has no `lastActivity`, and probing each session's newest event would cost one extra engine round trip per hit); since a matched event can never postdate the session's true latest activity, `stale: true` always certifies "the session has newer events", while `stale: false`/omitted only means "no evidence of staleness" — no `createdAt` fallback (unlike the ranking recency input) because a false fresh is worse than an unknown. Undeterminable values are omitted rather than nulled, and the field is absent without a report, so pre-0.9 results keep validating against the declared output schema.
+- Text projection: a stale hit's `· report …` line gains `(report is stale: session has newer events; re-run /transcript <sessionId> to refresh)`; fresh and undeterminable reports render exactly as before. The tool description now explains the field so the model knows to refresh before citing.
+- `latestExportedArtifact` keeps its signature (now a path-only view of the new `latestExportedArtifactInfo`); artifact selection order is unchanged (timestamp slug first, name tie-break).
+- README/README.zh document the field and its one-sided semantics in the Evidence handoff section.
+- Tests 144 → 168, tsc clean.
+
 ## 0.8.3 — 2026-11-25
 
 Quality & hardening patch: the CJK fallback stops leaking its budget, cwd matching closes path-shape bypasses, and lineage authorization gains an optional fail-closed mode.

@@ -1,7 +1,7 @@
 /** Native/model-facing text and UI-card projections of a validated RecallResult. */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import type { RecallDiagnostics, RecallResult } from './types.ts'
+import type { RecallDiagnostics, RecallItem, RecallResult } from './types.ts'
 import { formatDate, firstLineClipped, hasCJK } from './util.ts'
 
 const SNIPPET_CHARS = 120
@@ -11,6 +11,17 @@ function sessionLabel(result: RecallResult, index: number): string {
   if (!item) return String(index + 1)
   const title = item.title ? firstLineClipped(item.title, 48) : `untitled ${item.id8}`
   return `${title} (${item.id8}, ${formatDate(item.createdAt)}${item.live ? ', live' : ''})`
+}
+
+/**
+ * Appended to a hit's artifact line when its report predates known session
+ * activity (P1): `stale: true` certifies newer events exist, so the model is
+ * pointed at the refresh command. Fresh and undeterminable reports render
+ * exactly as before.
+ */
+function staleReportSuffix(item: RecallItem): string {
+  if (item.artifactPath == null || item.reportFreshness?.stale !== true) return ''
+  return ` (report is stale: session has newer events; re-run /transcript ${item.sessionId} to refresh)`
 }
 
 /**
@@ -35,7 +46,7 @@ export function renderRecallText(result: RecallResult): string {
   } else {
     result.items.forEach((item, i) => {
       lines.push(`${i + 1}. ${sessionLabel(result, i)}`)
-      lines.push(`   session ${item.sessionId}${item.artifactPath != null ? ` · report ${item.artifactPath}` : ''}`)
+      lines.push(`   session ${item.sessionId}${item.artifactPath != null ? ` · report ${item.artifactPath}` : ''}${staleReportSuffix(item)}`)
       lines.push(`   ${item.bestMatch.type} #${item.bestMatch.seq}: ${firstLineClipped(item.bestMatch.snippet, SNIPPET_CHARS)}`)
     })
   }

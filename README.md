@@ -42,6 +42,9 @@ Every recall hit carries the fields the other two plugins need — no ids copied
 |---|---|
 | `sessionId` | The full session id (the text projection prints it on its own `session …` line, next to the short `id8`). |
 | `artifactPath` | The newest report `dsh-session-export` already wrote for that session under its `dsh-transcripts/` directory (`transcript-<id8>-*` report or `bundle-<id8>-*.zip`, newest wins). `null` when no export exists yet — never a fabricated path. |
+| `reportFreshness` | Optional, only with a report: `exportedAt` is the export time in Unix ms (parsed from the filename's `YYYYMMDD-HHMMSS` slug in the local timezone, falling back to the file's mtime), and `stale: true` certifies the session demonstrably has events newer than the report — the text projection then appends `(report is stale: session has newer events; re-run /transcript <sessionId> to refresh)` to that hit's report line. Undeterminable values are omitted rather than nulled. |
+
+Freshness is deliberately one-sided: `stale` compares the export time against the hit's best-matching event time — the only per-session activity timestamp the search seam already carries (`SessionHeader` exposes `createdAt` only, and `listSessions` has no `lastActivity`) — so a `stale: true` verdict is always certain, while `stale: false`/omitted means "no evidence of staleness", not a guarantee the report is current.
 
 Worked example — recall finds the session, export produces the evidence, eval grades it:
 

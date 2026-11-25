@@ -15,7 +15,7 @@ import { createRecallTool, type RecallApprovalVerdict, type RecallApprover } fro
 export const name = 'session-recall'
 export const inject = ['tools', 'sessionQuery']
 
-export type { RecallArgs, RecallBestMatch, RecallDiagnostics, RecallItem, RecallResult, RecallScope } from './types.ts'
+export type { RecallArgs, RecallBestMatch, RecallDiagnostics, RecallItem, RecallReportFreshness, RecallResult, RecallScope } from './types.ts'
 export { rankItems, rankingActive } from './rank.ts'
 export type { RankingOptions, RankableItem } from './rank.ts'
 export type { RecallConfig, NormalizedRecallConfig, AllProjectsPolicy, LineageFailurePolicy } from './config.ts'

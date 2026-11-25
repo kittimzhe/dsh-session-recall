@@ -42,6 +42,9 @@ recall：上周给简历选的什么字体来着？
 |---|---|
 | `sessionId` | 完整会话 id（文本投影在 `session …` 一行单独打印，紧挨短 id `id8`）。 |
 | `artifactPath` | `dsh-session-export` 已为该会话写出的最新报告路径，位于其 `dsh-transcripts/` 目录下（`transcript-<id8>-*` 报告或 `bundle-<id8>-*.zip`，取最新）。尚无导出时为 `null`——绝不伪造路径。 |
+| `reportFreshness` | 可选，仅在报告存在时携带：`exportedAt` 为导出时间（Unix 毫秒，优先取文件名 `YYYYMMDD-HHMMSS` 时间戳 slug（本地时区）解析，取不到再回退文件 mtime）；`stale: true` 证明该会话确定存在比报告更新的事件——此时文本投影会在该命中的报告行尾追加 `(report is stale: session has newer events; re-run /transcript <sessionId> to refresh)`。判定不了的值一律缺省，不写 null。 |
+
+新鲜度刻意只做单向判定：`stale` 拿导出时间与该命中的最强匹配事件时间比较——这是检索接缝里每个命中唯一自带的活动时间戳（`SessionHeader` 只有 `createdAt`，`listSessions` 没有 `lastActivity`）——因此 `stale: true` 必然成立，而 `stale: false`/缺省只表示"没有过期证据"，不保证报告就是最新的。
 
 实操示例——recall 找到会话，export 出证据，eval 打分：
 
@@ -70,6 +73,9 @@ recall "resume template font"
 |---|---|
 | `sessionId` | 完整会话 id（文本投影在 `session …` 一行单独打印，紧挨短 id `id8`）。 |
 | `artifactPath` | `dsh-session-export` 已为该会话写出的最新报告路径，位于其 `dsh-transcripts/` 目录下（`transcript-<id8>-*` 报告或 `bundle-<id8>-*.zip`，取最新）。尚无导出时为 `null`——绝不伪造路径。 |
+| `reportFreshness` | 可选，仅在报告存在时携带：`exportedAt` 为导出时间（Unix 毫秒，优先取文件名 `YYYYMMDD-HHMMSS` 时间戳 slug（本地时区）解析，取不到再回退文件 mtime）；`stale: true` 证明该会话确定存在比报告更新的事件——此时文本投影会在该命中的报告行尾追加 `(report is stale: session has newer events; re-run /transcript <sessionId> to refresh)`。判定不了的值一律缺省，不写 null。 |
+
+新鲜度刻意只做单向判定：`stale` 拿导出时间与该命中的最强匹配事件时间比较——这是检索接缝里每个命中唯一自带的活动时间戳（`SessionHeader` 只有 `createdAt`，`listSessions` 没有 `lastActivity`）——因此 `stale: true` 必然成立，而 `stale: false`/缺省只表示"没有过期证据"，不保证报告就是最新的。
 
 实操示例——recall 找到会话，export 出证据，eval 打分：
 

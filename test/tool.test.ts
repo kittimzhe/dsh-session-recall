@@ -185,6 +185,140 @@ describe('recall tool definition', () => {
   })
 })
 
+describe('recall execute — report freshness (#8 / P1)', () => {
+  // The hit() fixture pins bestMatch.time to 2026-08-20 local time.
+  const id = 'session-ca62e005-4274-477b-bd56-9d9508edb040'
+
+  function listDirOf(names: string[]): (dir: string) => string[] {
+    return (dir) => {
+      expect(dir).toBe('/proj/dsh-transcripts')
+      return names
+    }
+  }
+
+  function hitAtTime(time: number): SessionSearchHit {
+    const h = hit(id, '/proj', 'resume template font')
+    ;(h.bestMatch as { time: number }).time = time
+    return h
+  }
+
+  it('marks the hit stale when the report predates the matched event', async () => {
+    const engine = makeEngine({ items: [hit(id, '/proj', 'resume template font')] })
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false }, engine, undefined, listDirOf(['transcript-ca62e005-20260701-000000.md'])),
+      { query: 'resume template' },
+      '/proj',
+    )
+    expect(out.items[0]?.artifactPath).toBe('/proj/dsh-transcripts/transcript-ca62e005-20260701-000000.md')
+    expect(out.items[0]?.reportFreshness).toEqual({
+      exportedAt: new Date(2026, 6, 1, 0, 0, 0).getTime(),
+      stale: true, // 2026-07-01 export < 2026-08-20 matched event
+    })
+  })
+
+  it('reports fresh when the report is newer than the matched event', async () => {
+    const engine = makeEngine({ items: [hit(id, '/proj', 'resume template font')] })
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false }, engine, undefined, listDirOf(['bundle-ca62e005-20261001-090000.zip'])),
+      { query: 'resume template' },
+      '/proj',
+    )
+    expect(out.items[0]?.reportFreshness).toEqual({
+      exportedAt: new Date(2026, 9, 1, 9, 0, 0).getTime(),
+      stale: false, // 2026-10-01 export ≥ 2026-08-20 matched event
+    })
+  })
+
+  it('omits the field entirely when no report exists (unknown, not false)', async () => {
+    const engine = makeEngine({ items: [hit(id, '/proj', 'resume template font')] })
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false }, engine, undefined, () => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }),
+      { query: 'resume template' },
+      '/proj',
+    )
+    expect(out.items[0]?.reportFreshness).toBeUndefined()
+    expect('reportFreshness' in (out.items[0] ?? {})).toBe(false)
+  })
+
+  it('omits stale when the matched event carries no usable time (0 from the raw scan)', async () => {
+    const engine = makeEngine({ items: [hitAtTime(0)] })
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false }, engine, undefined, listDirOf(['transcript-ca62e005-20260701-000000.md'])),
+      { query: 'resume template' },
+      '/proj',
+    )
+    expect(out.items[0]?.reportFreshness).toEqual({ exportedAt: new Date(2026, 6, 1, 0, 0, 0).getTime() })
+  })
+
+  it('derives exportedAt from the file mtime when the filename has no slug', async () => {
+    const engine = makeEngine({ items: [hit(id, '/proj', 'resume template font')] })
+    const out = await run(
+      createRecallTool(
+        { callerTreeOnly: false },
+        engine,
+        undefined,
+        listDirOf(['transcript-ca62e005-final.md']),
+        () => ({ mtimeMs: 555 }),
+      ),
+      { query: 'resume template' },
+      '/proj',
+    )
+    expect(out.items[0]?.reportFreshness).toEqual({ exportedAt: 555, stale: true }) // mtime far predates the event
+  })
+
+  it('computes freshness on CJK fallback hits the same way', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [record('session-zh', '/proj')]
+    engine.filterResults.set('session-zh', [doc('session-zh', '简历模板的字体已嵌入')])
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false }, engine, undefined, listDirOf(['transcript-zh-20260701-000000.md'])),
+      { query: '字体' },
+      '/proj',
+    )
+    expect(out.items[0]?.artifactPath).toBe('/proj/dsh-transcripts/transcript-zh-20260701-000000.md')
+    expect(out.items[0]?.reportFreshness).toEqual({ exportedAt: new Date(2026, 6, 1, 0, 0, 0).getTime(), stale: true })
+  })
+
+  it('validates results carrying reportFreshness, and old results without it, against the declared schema', () => {
+    const tool = createRecallTool({ callerTreeOnly: false }, makeEngine())
+    const item = {
+      sessionId: 's2',
+      id8: 's2',
+      title: null,
+      createdAt: 1,
+      cwd: '/proj',
+      live: false,
+      persisted: true,
+      artifactPath: '/proj/dsh-transcripts/transcript-s2-20261001-090000.md',
+      bestMatch: { seq: 2, type: 't', time: 1, snippet: 'y' },
+    }
+    const base = {
+      query: 'q',
+      scope: { cwd: null, allProjects: false, sessionId: null },
+      count: 1,
+      hasMore: false,
+      items: [item],
+      nextCursor: null,
+      hint: null,
+      redacted: 0,
+      diagnostics: { source: 'fts', ranked: false },
+    }
+    // New shape: full, stale-omitted, and field-omitted variants all validate.
+    expect(validateJsonSchemaValue(tool.output.schema, {
+      ...base,
+      items: [{ ...item, reportFreshness: { exportedAt: 1_700_000_000_000, stale: true } }],
+    })).toEqual([])
+    expect(validateJsonSchemaValue(tool.output.schema, {
+      ...base,
+      items: [{ ...item, reportFreshness: { exportedAt: 1_700_000_000_000 } }],
+    })).toEqual([])
+    // Old shape (pre-0.9 results): no field at all, no sub-fields forced.
+    expect(validateJsonSchemaValue(tool.output.schema, base)).toEqual([])
+  })
+})
+
 describe('recall execute — cross-session path', () => {
   it('scopes to the calling agent cwd by default', async () => {
     const engine = makeEngine({ items: [hit('session-a1', '/proj', 'found the resume template')] })
