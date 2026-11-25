@@ -188,6 +188,7 @@ dsh plugin --profile web add github:kittimzhe/dsh-session-recall
     rawScanMaxSessions: 200      # 降级扫描预算：访问会话数（1..2000）
     rawScanMaxDurationMs: 20000  # 降级扫描墙钟上限（1000..120000）
     rawScanMaxSessionBytes: 8388608  # 降级扫描单日志压缩体积上限（字节）
+    lineageFailurePolicy: open   # 谱系追踪失败时：open 放行全部（fail-open），closed 拒绝结果（fail-closed）
 ```
 
 ## 降级模式（v0.7.5）

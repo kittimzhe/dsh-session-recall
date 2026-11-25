@@ -1,10 +1,16 @@
 /** Plugin-row configuration for dsh-session-recall. */
+import { resolve, sep } from 'node:path'
 import { normalizeRedactionMode, type RedactionMode } from './redact.ts'
 
 /** What happens when the model passes `all_projects=true`. */
 export type AllProjectsPolicy = 'allow' | 'deny' | 'confirm'
 
 export const ALL_PROJECTS_POLICIES: readonly AllProjectsPolicy[] = ['allow', 'deny', 'confirm']
+
+/** What happens when lineage tracing fails while `callerTreeOnly` is on. */
+export type LineageFailurePolicy = 'open' | 'closed'
+
+export const LINEAGE_FAILURE_POLICIES: readonly LineageFailurePolicy[] = ['open', 'closed']
 
 export interface RecallConfig {
   /** Honor the tool's `all_projects` argument. Default `true`. */
@@ -54,6 +60,13 @@ export interface RecallConfig {
   rawScanMaxDurationMs?: number
   /** Compressed-size ceiling (bytes) per session log in a degraded scan. Default 8 MiB. */
   rawScanMaxSessionBytes?: number
+  /**
+   * When lineage tracing fails while `callerTreeOnly` is on: `'open'` (the
+   * default, pre-0.8.3 behavior) degrades to allowing all sessions; `'closed'`
+   * refuses the results with a model-facing hint instead of risking
+   * over-broad access.
+   */
+  lineageFailurePolicy?: LineageFailurePolicy
 }
 
 /** Validated, fully defaulted configuration. */
@@ -75,6 +88,7 @@ export interface NormalizedRecallConfig {
   readonly rawScanMaxSessions: number
   readonly rawScanMaxDurationMs: number
   readonly rawScanMaxSessionBytes: number
+  readonly lineageFailurePolicy: LineageFailurePolicy
 }
 
 export const RECALL_DEFAULT_LIMIT_MAX = 10
@@ -97,6 +111,27 @@ function normalizePolicy(value: AllProjectsPolicy | undefined): AllProjectsPolic
     : 'allow'
 }
 
+function normalizeLineagePolicy(value: LineageFailurePolicy | undefined): LineageFailurePolicy {
+  return typeof value === 'string' && (LINEAGE_FAILURE_POLICIES as readonly string[]).includes(value)
+    ? value
+    : 'open'
+}
+
+/**
+ * Normalize a path for allowlist/denylist (and other cwd) comparisons:
+ * `path.resolve` collapses `..`/`.` segments and relative forms, then a
+ * trailing separator is stripped so `/proj/` and `/proj` are one directory.
+ * The empty string passes through unchanged (callers treat it as "unknown
+ * cwd"). Relative entries resolve against the host process cwd — the config
+ * is normalized once at tool construction, before any call context exists,
+ * and session cwds are always absolute host paths recorded at session start.
+ */
+export function normalizeCwdPath(cwd: string): string {
+  if (cwd === '') return cwd
+  const resolved = resolve(cwd)
+  return resolved.length > 1 && resolved.endsWith(sep) ? resolved.slice(0, -sep.length) : resolved
+}
+
 /** Default, clamp, and cross-check every optional field. */
 export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallConfig {
   const defaultLimit = intIn(config?.defaultLimit, 5, 1, RECALL_DEFAULT_LIMIT_MAX)
@@ -108,8 +143,8 @@ export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallCo
     cjkFallback: config?.cjkFallback !== false,
     cjkFallbackScanMax: intIn(config?.cjkFallbackScanMax, RECALL_CJK_FALLBACK_SCAN_MAX_DEFAULT, 1, RECALL_CJK_FALLBACK_SCAN_MAX_MAX),
     redactionMode: normalizeRedactionMode(config?.redactionMode),
-    cwdAllowlist: stringList(config?.cwdAllowlist),
-    cwdDenylist: stringList(config?.cwdDenylist),
+    cwdAllowlist: stringList(config?.cwdAllowlist).map(normalizeCwdPath),
+    cwdDenylist: stringList(config?.cwdDenylist).map(normalizeCwdPath),
     allProjectsPolicy: normalizePolicy(config?.allProjectsPolicy),
     recencyHalfLifeDays:
       typeof config?.recencyHalfLifeDays === 'number' && Number.isFinite(config.recencyHalfLifeDays) && config.recencyHalfLifeDays > 0
@@ -121,16 +156,23 @@ export function normalizeRecallConfig(config?: RecallConfig): NormalizedRecallCo
     rawScanMaxSessions: intIn(config?.rawScanMaxSessions, 200, 1, 2000),
     rawScanMaxDurationMs: intIn(config?.rawScanMaxDurationMs, 20_000, 1_000, 120_000),
     rawScanMaxSessionBytes: intIn(config?.rawScanMaxSessionBytes, 8 * 1024 * 1024, 262_144, 64 * 1024 * 1024),
+    lineageFailurePolicy: normalizeLineagePolicy(config?.lineageFailurePolicy),
   }
 }
 
-/** Whether a session cwd is searchable under the allowlist/denylist policy. */
+/**
+ * Whether a session cwd is searchable under the allowlist/denylist policy.
+ * Both the incoming cwd and the configured lists are compared in normalized
+ * form (see `normalizeCwdPath`), so trailing separators and `..` segments
+ * cannot dodge either side of the policy.
+ */
 export function cwdAllowed(cwd: string | null | undefined, cfg: NormalizedRecallConfig): boolean {
   if (cwd == null || cwd === '') {
     // Unknown cwd: not denylisted, but an explicit allowlist does not cover it either.
     return cfg.cwdAllowlist.length === 0
   }
-  if (cfg.cwdDenylist.includes(cwd)) return false
-  if (cfg.cwdAllowlist.length > 0 && !cfg.cwdAllowlist.includes(cwd)) return false
+  const target = normalizeCwdPath(cwd)
+  if (cfg.cwdDenylist.includes(target)) return false
+  if (cfg.cwdAllowlist.length > 0 && !cfg.cwdAllowlist.includes(target)) return false
   return true
 }

@@ -37,6 +37,8 @@ export interface RecallDiagnostics {
   readonly scanned?: number
   /** The fallback scan budget (`cjkFallbackScanMax`), when a scan ran. */
   readonly scanBudget?: number
+  /** True when a scan collected more matches than the page limit and the tail was cut. */
+  readonly truncated?: boolean
   /** True when re-ranking (recency decay / pinning) was applied to this page. */
   readonly ranked: boolean
 }

@@ -125,6 +125,17 @@ describe('rawScanSessions', () => {
     expect(wide.items.some((item) => item.sessionId === 'session-ccc33333-cccc')).toBe(true)
   })
 
+  it('matches the cwd scope after normalization: trailing slash and .. (v0.8.3)', async () => {
+    // Scope written with a trailing separator still matches headers without it.
+    const trailing = await rawScanSessions({ root, query: 'needle', cwd: CWD_A + '/', allProjects: false, sessionId: null, sinceDays: 0, tools: null, errorsOnly: false, limit: 10, maxSessions: 50, maxDurationMs: 30_000, maxSessionBytes: 8 * 1024 * 1024 })
+    expect(trailing.items.length).toBeGreaterThan(0)
+    expect(trailing.items.every((item) => item.cwd === CWD_A)).toBe(true)
+    // A `..` shape that resolves to the scoped cwd is not excluded either.
+    const parent = CWD_A.slice(0, CWD_A.lastIndexOf('/')) // /tmp
+    const dotted = await rawScanSessions({ root, query: 'needle', cwd: `${parent}/proj-a/../proj-a`, allProjects: false, sessionId: null, sinceDays: 0, tools: null, errorsOnly: false, limit: 10, maxSessions: 50, maxDurationMs: 30_000, maxSessionBytes: 8 * 1024 * 1024 })
+    expect(dotted.items.length).toBe(trailing.items.length)
+  })
+
   it('honors sinceDays and sessionId', async () => {
     const fresh = await rawScanSessions({ root, query: 'needle', cwd: CWD_A, allProjects: true, sessionId: null, sinceDays: 1, tools: null, errorsOnly: false, limit: 10, maxSessions: 50, maxDurationMs: 30_000, maxSessionBytes: 8 * 1024 * 1024 })
     expect(fresh.items.some((item) => item.sessionId === 'session-ddd44444-dddd')).toBe(false)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { cwdAllowed, normalizeRecallConfig } from '../src/config.ts'
+import { resolve } from 'node:path'
+import { cwdAllowed, normalizeCwdPath, normalizeRecallConfig } from '../src/config.ts'
 
 describe('normalizeRecallConfig', () => {
   it('defaults everything', () => {
@@ -21,6 +22,7 @@ describe('normalizeRecallConfig', () => {
       rawScanMaxSessions: 200,
       rawScanMaxDurationMs: 20000,
       rawScanMaxSessionBytes: 8388608,
+      lineageFailurePolicy: 'open',
     })
   })
 
@@ -43,6 +45,7 @@ describe('normalizeRecallConfig', () => {
       rawScanMaxSessions: 200,
       rawScanMaxDurationMs: 20000,
       rawScanMaxSessionBytes: 8388608,
+      lineageFailurePolicy: 'open',
     })
   })
 
@@ -100,5 +103,51 @@ describe('normalizeRecallConfig', () => {
     expect(normalizeRecallConfig({ cjkFallbackScanMax: 0 }).cjkFallbackScanMax).toBe(1)
     expect(normalizeRecallConfig({ cjkFallbackScanMax: 99_999 }).cjkFallbackScanMax).toBe(500)
     expect(normalizeRecallConfig({ cjkFallbackScanMax: Number.NaN }).cjkFallbackScanMax).toBe(50)
+  })
+
+  it('defaults lineageFailurePolicy to open and rejects unknown values (v0.8.3)', () => {
+    expect(normalizeRecallConfig().lineageFailurePolicy).toBe('open')
+    expect(normalizeRecallConfig({ lineageFailurePolicy: 'closed' }).lineageFailurePolicy).toBe('closed')
+    expect(normalizeRecallConfig({ lineageFailurePolicy: 'maybe' as never }).lineageFailurePolicy).toBe('open')
+    expect(normalizeRecallConfig({ lineageFailurePolicy: undefined }).lineageFailurePolicy).toBe('open')
+  })
+
+  it('normalizes configured cwd list entries at load time (v0.8.3)', () => {
+    expect(normalizeRecallConfig({ cwdAllowlist: ['/proj/'], cwdDenylist: ['/proj/secret/'] })).toMatchObject({
+      cwdAllowlist: ['/proj'],
+      cwdDenylist: ['/proj/secret'],
+    })
+    // Relative entries resolve against the host process cwd, deterministically.
+    expect(normalizeRecallConfig({ cwdAllowlist: ['rel/proj'] }).cwdAllowlist).toEqual([resolve('rel/proj')])
+    expect(normalizeRecallConfig({ cwdDenylist: ['../escape'] }).cwdDenylist).toEqual([resolve('../escape')])
+  })
+
+  it('cwdAllowed: trailing separators are equivalent on both sides (v0.8.3)', () => {
+    const cfg = normalizeRecallConfig({ cwdAllowlist: ['/proj/'], cwdDenylist: ['/proj/secret/'] })
+    expect(cwdAllowed('/proj', cfg)).toBe(true)
+    expect(cwdAllowed('/proj/', cfg)).toBe(true) // allowlist entry had the slash
+    expect(cwdAllowed('/proj/secret', cfg)).toBe(false)
+    expect(cwdAllowed('/proj/secret/', cfg)).toBe(false) // denylist entry had the slash
+    const denyOnly = normalizeRecallConfig({ cwdDenylist: ['/nope/'] })
+    expect(cwdAllowed('/nope', denyOnly)).toBe(false)
+    expect(cwdAllowed('/nope/', denyOnly)).toBe(false)
+    expect(cwdAllowed('/nope/x', denyOnly)).toBe(true)
+  })
+
+  it('cwdAllowed: `..` segments resolve before allowlist/denylist matching (v0.8.3)', () => {
+    const cfg = normalizeRecallConfig({ cwdAllowlist: ['/proj'], cwdDenylist: ['/proj/secret'] })
+    // Hit: /docs/../proj IS /proj — inside the allowlist despite the traversal shape.
+    expect(cwdAllowed('/docs/../proj', cfg)).toBe(true)
+    // Hit (deny): /proj/../proj/secret IS /proj/secret — the traversal must not dodge the denylist.
+    expect(cwdAllowed('/proj/../proj/secret', cfg)).toBe(false)
+    // Miss: /proj/../elsewhere resolves OUTSIDE the allowlist.
+    expect(cwdAllowed('/proj/../elsewhere', cfg)).toBe(false)
+  })
+
+  it('normalizeCwdPath strips trailing separators but never shrinks the root', () => {
+    expect(normalizeCwdPath('/proj/')).toBe('/proj')
+    expect(normalizeCwdPath('/')).toBe('/')
+    expect(normalizeCwdPath('')).toBe('')
+    expect(normalizeCwdPath('/proj//')).toBe('/proj')
   })
 })

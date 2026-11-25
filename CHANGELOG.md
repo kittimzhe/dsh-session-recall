@@ -1,3 +1,12 @@
+## 0.8.3 — 2026-11-25
+
+Quality & hardening patch: the CJK fallback stops leaking its budget, cwd matching closes path-shape bypasses, and lineage authorization gains an optional fail-closed mode.
+
+- **CJK fallback scan rework** (cross-session path): candidate sessions are now sorted by `createdAt` (newest first, stable) *before* the `cjkFallbackScanMax` budget is applied — stale sessions can no longer crowd recent history out of the scan; `filterEvents` probes run with bounded concurrency (8 per batch) instead of one-by-one; and the full budget (or the whole candidate list) is scanned before results are truncated to `limit`, so a page full of hits no longer stops the pass while the budget is unspent. `diagnostics` gained an optional `truncated` flag reporting when that truncation cut collected matches; `scanned`/`scanBudget` keep their meanings (visited sessions vs budget).
+- **cwd path normalization**: allowlist/denylist matching now compares normalized paths (`path.resolve` + trailing-separator strip) on both sides — `/proj/` and `/proj` are the same directory, and `/proj/../secret` can no longer dodge a denylist (nor fake its way into an allowlist). The same normalization covers the equivalent cwd comparisons everywhere: cross-session hit filtering, the CJK fallback scan (including its cwd scoping against the calling session), `session_id` reads, the calling-cwd gate, and the degraded raw scan's scope check; the backend `sessionFilters` value is normalized too. Config list entries are normalized at load; relative entries resolve against the host process cwd (deterministic, since tool construction precedes any call context).
+- **`lineageFailurePolicy` (`open`/`closed`, default `open`)** — what happens when lineage tracing fails while `callerTreeOnly` is on. `open` (default) keeps the pre-0.8.3 fail-open behavior; `closed` refuses the results — cross-session and `session_id` alike — with a model-facing hint instead of risking over-broad access.
+- Tests 130 → 144, tsc clean.
+
 ## 0.8.2 — 2026-11-23
 
 Peer-range compatibility release (no behavior change).

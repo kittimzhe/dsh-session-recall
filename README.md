@@ -165,6 +165,7 @@ Plugin row config (all optional):
     rawScanMaxSessions: 200   # degraded scan budget: sessions visited (1..2000)
     rawScanMaxDurationMs: 20000  # degraded scan wall-clock ceiling (1000..120000)
     rawScanMaxSessionBytes: 8388608  # per-log compressed-size cap in the degraded scan
+    lineageFailurePolicy: open  # when lineage tracing fails: open = allow all (fail-open), closed = refuse results (fail-closed)
 ```
 
 ## Degraded mode (v0.7.5)

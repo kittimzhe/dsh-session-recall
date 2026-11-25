@@ -24,6 +24,7 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } fr
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { RecallItem } from './types.ts'
+import { normalizeCwdPath } from './config.ts'
 import { id8, snippetAround, splitTerms } from './util.ts'
 
 /** The bundled pure-JS zstd decompressor, loaded once on first use. */
@@ -356,6 +357,9 @@ export async function rawScanSessions(options: RawScanOptions): Promise<RawScanR
       ? options.tools.map((t) => t.toLowerCase())
       : null
   const deadline = options.maxDurationMs > 0 ? Date.now() + options.maxDurationMs : 0
+  // Same normalized path semantics as the indexed path's cwd policy checks:
+  // trailing separators and `..` segments on either side must not skew scope.
+  const scopedCwd = options.cwd != null && options.cwd !== '' ? normalizeCwdPath(options.cwd) : options.cwd
 
   const candidates = listSessionDirs(options.root)
   const items: RecallItem[] = []
@@ -379,7 +383,7 @@ export async function rawScanSessions(options: RawScanOptions): Promise<RawScanR
       continue
     }
     if (options.sessionId != null && header.id !== options.sessionId) continue
-    if (!options.allProjects && options.cwd != null && header.cwd !== options.cwd) continue
+    if (!options.allProjects && scopedCwd != null && normalizeCwdPath(header.cwd ?? '') !== scopedCwd) continue
     if (sinceMs > 0 && !(header.createdAt >= sinceMs)) continue
     if (logInfo.size > options.maxSessionBytes) {
       skippedOversized += 1

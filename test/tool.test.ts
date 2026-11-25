@@ -328,6 +328,86 @@ describe('recall execute — CJK substring fallback', () => {
   })
 })
 
+describe('recall execute — CJK fallback scan quality (v0.8.3)', () => {
+  const DAY = 86_400_000
+  const BASE = new Date(2026, 8, 1).getTime()
+
+  it('spends the scan budget on the newest sessions (old ones are crowded out)', async () => {
+    const engine = makeEngine({ items: [] })
+    // listSessions order is oldest-first here: the pre-0.8.3 scan would have
+    // spent the whole budget on the two oldest sessions and never reached the
+    // fresh one.
+    engine.listResult = [
+      record('session-ancient', '/proj', BASE),
+      record('session-middle', '/proj', BASE + DAY),
+      record('session-fresh', '/proj', BASE + 2 * DAY),
+    ]
+    engine.filterResults.set('session-ancient', [doc('session-ancient', '古老的字体记录')])
+    engine.filterResults.set('session-fresh', [doc('session-fresh', '最新的字体记录')])
+    const out = await run(createRecallTool({ callerTreeOnly: false, cjkFallbackScanMax: 2 }, engine), { query: '字体' }, '/proj')
+
+    expect(engine.filterCalls).toEqual(['session-fresh', 'session-middle']) // newest first; ancient never probed
+    expect(out.items.map((item) => item.sessionId)).toEqual(['session-fresh'])
+    expect(out.diagnostics).toEqual({ source: 'cjk-fallback', scanned: 2, scanBudget: 2, ranked: false, truncated: false })
+  })
+
+  it('scans the full budget before truncating to the page limit', async () => {
+    const engine = makeEngine({ items: [] })
+    engine.listResult = [
+      record('session-1', '/proj', BASE),
+      record('session-2', '/proj', BASE + DAY),
+      record('session-3', '/proj', BASE + 2 * DAY),
+    ]
+    for (const id of ['session-1', 'session-2', 'session-3']) engine.filterResults.set(id, [doc(id, '字体命中')])
+    const out = await run(
+      createRecallTool({ callerTreeOnly: false, cjkFallbackScanMax: 10 }, engine),
+      { query: '字体', limit: 2 },
+      '/proj',
+    )
+
+    expect(engine.filterCalls).toHaveLength(3) // no early break once the limit is reached
+    expect(out.diagnostics).toEqual({ source: 'cjk-fallback', scanned: 3, scanBudget: 10, ranked: false, truncated: true })
+    expect(out.count).toBe(2)
+    expect(out.items.map((item) => item.sessionId)).toEqual(['session-3', 'session-2']) // newest first
+  })
+
+  it('probes sessions with bounded concurrency and stays deterministic (same input → same output)', async () => {
+    const buildEngine = (): FakeEngine => {
+      const engine = makeEngine({ items: [] })
+      engine.listResult = Array.from({ length: 12 }, (_, i) => record(`session-${String(i).padStart(2, '0')}`, '/proj', BASE + i * DAY))
+      for (const i of [0, 3, 7, 11]) {
+        const id = `session-${String(i).padStart(2, '0')}`
+        engine.filterResults.set(id, [doc(id, `字体出现在 ${id}`)])
+      }
+      return engine
+    }
+    const first = await run(createRecallTool({ callerTreeOnly: false }, buildEngine()), { query: '字体' }, '/proj')
+    const second = await run(createRecallTool({ callerTreeOnly: false }, buildEngine()), { query: '字体' }, '/proj')
+    expect(first.items).toEqual(second.items) // identical inputs → identical pages
+    expect(first.items.map((item) => item.sessionId)).toEqual(['session-11', 'session-07', 'session-03', 'session-00'])
+
+    // Concurrency proof: track how many filterEvents probes are in flight at
+    // once — parallel (> 1) but bounded (≤ the 8-per-batch chunk size).
+    const engine = buildEngine()
+    let inFlight = 0
+    let maxInFlight = 0
+    engine.filterEvents = async (sessionId: string, filters: readonly SessionEventResultFilter[]) => {
+      engine.filterCalls.push(sessionId)
+      engine.filterArgs.push(filters)
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((r) => setTimeout(r, 5))
+      inFlight -= 1
+      return engine.filterResults.get(sessionId) ?? []
+    }
+    const out = await run(createRecallTool({ callerTreeOnly: false }, engine), { query: '字体' }, '/proj')
+    expect(engine.filterCalls).toHaveLength(12)
+    expect(maxInFlight).toBeGreaterThan(1)
+    expect(maxInFlight).toBeLessThanOrEqual(8)
+    expect(out.items).toEqual(first.items)
+  })
+})
+
 describe('recall execute — within-session path', () => {
   it('searches events and skips title enrichment', async () => {
     const engine = makeEngine()
@@ -381,6 +461,29 @@ describe('recall execute — scope policy (v0.4)', () => {
     const out = await run(createRecallTool({ cwdDenylist: ['/secret'] , callerTreeOnly: false}, engine), { query: '字体' }, '/proj')
     expect(out.count).toBe(1)
     expect(engine.filterCalls).toEqual(['session-keep'])
+  })
+
+  it('matches cwd policy after normalization: trailing slash and .. cannot dodge (v0.8.3)', async () => {
+    // Denylist written with a trailing slash still blocks the session whose
+    // header cwd lacks it, through the cross-session hit filter.
+    const engine = makeEngine({ items: [hit('session-ok', '/proj', 'found it'), hit('session-no', '/secret', 'found it too')] })
+    const out = await run(createRecallTool({ cwdDenylist: ['/secret/'] , callerTreeOnly: false}, engine), { query: 'found' }, '/proj')
+    expect(out.count).toBe(1)
+    expect(out.items[0]?.sessionId).toBe('session-ok')
+
+    // A caller cwd written with a traversal shape still passes an allowlist
+    // entry it resolves to, and the backend session filter sees the
+    // normalized path.
+    const allowed = makeEngine({ items: [] })
+    await run(createRecallTool({ cwdAllowlist: ['/real/proj'] , callerTreeOnly: false}, allowed), { query: 'x' }, '/real/other/../proj')
+    expect(allowed.sessionsRequests[0]?.sessionFilters).toEqual([{ kind: 'cwd', values: ['/real/proj'] }])
+
+    // The same traversal shape pointing OUTSIDE the allowlist is refused.
+    const refused = makeEngine({ items: [] })
+    const outRefused = await run(createRecallTool({ cwdAllowlist: ['/real/proj'] , callerTreeOnly: false}, refused), { query: 'x' }, '/real/other/../elsewhere')
+    expect(outRefused.count).toBe(0)
+    expect(outRefused.hint).toContain('scope policy')
+    expect(refused.sessionsRequests).toHaveLength(0)
   })
 })
 
@@ -513,8 +616,10 @@ describe('recall execute — ranking & diagnostics (v0.5)', () => {
     engine.listResult = [record('session-keep', '/proj'), record('session-keep2', '/proj')]
     engine.filterResults.set('session-keep', [doc('session-keep', '改简历字体')])
     const out = await run(createRecallTool({ callerTreeOnly: false,  cjkFallbackScanMax: 10  }, engine), { query: '字体' }, '/proj')
-    // scanned counts VISITED sessions (both), not matching ones (one).
-    expect(out.diagnostics).toEqual({ source: 'cjk-fallback', scanned: 2, scanBudget: 10, ranked: false })
+    // scanned counts VISITED sessions (both), not matching ones (one); the
+    // whole budget is scanned before truncating to the page limit, and
+    // `truncated` reports whether that cut dropped collected matches.
+    expect(out.diagnostics).toEqual({ source: 'cjk-fallback', scanned: 2, scanBudget: 10, ranked: false, truncated: false })
     expect(out.count).toBe(1)
   })
 
@@ -630,6 +735,60 @@ describe('caller authorization', () => {
     const tool = createRecallTool({ callerTreeOnly: false }, engine)
     const result = await tool.execute({ query: 'session' }, makeExec('/proj', 'caller-session-1')) as RecallResult
     expect(result.items).toHaveLength(2)
+  })
+})
+
+describe('lineageFailurePolicy (v0.8.3)', () => {
+  function brokenTraceEngine(): FakeEngine {
+    const engine = makeEngine({ items: [hit('session-any', '/proj', 'found it')] })
+    engine.traceSession = async () => {
+      throw new Error('lineage backend down')
+    }
+    return engine
+  }
+
+  it("refuses cross-session results when 'closed' and lineage tracing fails", async () => {
+    const engine = brokenTraceEngine()
+    const tool = createRecallTool({ lineageFailurePolicy: 'closed' }, engine)
+    const out = await tool.execute({ query: 'found' }, makeExec('/proj', 'caller-session-1')) as RecallResult
+    expect(out.items).toEqual([])
+    expect(out.count).toBe(0)
+    expect(out.hint).toContain("lineageFailurePolicy: 'closed'")
+    expect(out.hint).toContain('fail-closed')
+    expect(out.diagnostics).toBeNull()
+    expect(engine.sessionsRequests).toHaveLength(0) // refused before searching
+  })
+
+  it("refuses a session_id read when 'closed' and lineage tracing fails", async () => {
+    const engine = brokenTraceEngine()
+    const tool = createRecallTool({ lineageFailurePolicy: 'closed' }, engine)
+    const out = await tool.execute({ query: 'found', session_id: 'session-any' }, makeExec('/proj', 'caller-session-1')) as RecallResult
+    expect(out.items).toEqual([])
+    expect(out.hint).toContain("lineageFailurePolicy: 'closed'")
+    expect(engine.eventsRequests).toHaveLength(0)
+  })
+
+  it("keeps the pre-0.8.3 fail-open behavior when 'open' and lineage tracing fails", async () => {
+    const engine = brokenTraceEngine()
+    const tool = createRecallTool({ lineageFailurePolicy: 'open' }, engine)
+    const out = await tool.execute({ query: 'found' }, makeExec('/proj', 'caller-session-1')) as RecallResult
+    expect(out.items).toHaveLength(1) // degraded to allow-everything, no refusal
+    expect(out.hint).toBeNull()
+  })
+
+  it("searches normally when 'closed' but lineage tracing succeeds", async () => {
+    const engine = makeEngine({ items: [hit('caller-session-1', '/proj', 'found it')] })
+    engine.lineageTraceResult = {
+      target: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+      ancestors: [],
+      descendants: [],
+      complete: true,
+      root: { header: { id: 'caller-session-1', createdAt: 0, version: 0 } },
+    } as unknown as SessionLineageTrace
+    const tool = createRecallTool({ lineageFailurePolicy: 'closed' }, engine)
+    const out = await tool.execute({ query: 'found' }, makeExec('/proj', 'caller-session-1')) as RecallResult
+    expect(out.items).toHaveLength(1)
+    expect(out.hint).toBeNull()
   })
 })
 

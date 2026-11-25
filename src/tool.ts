@@ -30,7 +30,7 @@ import type { SessionLineageTrace, SessionLineageNode } from '@deepseek-ai/dsh-s
 import { SessionId as brandSessionId, type SessionId } from '@deepseek-ai/dsh-session'
 import { discoverSessionsRoot, isIndexOutage, rawScanSessions } from './resilient.ts'
 import type { NormalizedRecallConfig, RecallConfig } from './config.ts'
-import { cwdAllowed, normalizeRecallConfig } from './config.ts'
+import { cwdAllowed, normalizeCwdPath, normalizeRecallConfig } from './config.ts'
 import { redactText } from './redact.ts'
 import { rankItems, rankingActive } from './rank.ts'
 import { cjkFallbackHint, cjkZeroHitHint, recallContentBlocks, recallPresentationMeta } from './render.ts'
@@ -240,6 +240,15 @@ function cjkTextFilters(query: string): { filters: Array<{ kind: 'text'; text: s
   return { filters: terms.map((term) => ({ kind: 'text', text: term })), highlight: terms[0] ?? query }
 }
 
+/** How many `filterEvents` probes run concurrently in one CJK fallback scan. */
+const CJK_SCAN_CONCURRENCY = 8
+
+/** Session creation time, tolerating a missing or invalid header field. */
+function createdAtOf(record: SessionRecord): number {
+  const t = record.header.createdAt
+  return typeof t === 'number' && Number.isFinite(t) ? t : 0
+}
+
 /**
  * CJK substring-scan fallback for zero-hit full-text searches. SQLite FTS5's
  * `unicode61` tokenizer treats an uninterrupted CJK run as one token, so a
@@ -248,6 +257,11 @@ function cjkTextFilters(query: string): { filters: Array<{ kind: 'text'; text: s
  * Unicode/case-insensitive regex scan that is deliberately independent of FTS
  * providers, so scanning each scoped session with it recovers the exact
  * substring matches the full-text index cannot see.
+ *
+ * Quality rules (v0.8.3): candidates are sorted newest-first so the scan
+ * budget reaches recent history; probes run with bounded concurrency; the
+ * full budget is scanned before the collected matches are truncated to the
+ * page limit — the scan never stops early just because `limit` was reached.
  */
 async function cjkScanSessions(
   engine: RecallQueryEngine,
@@ -258,32 +272,42 @@ async function cjkScanSessions(
   scanMax: number,
   limit: number,
   signal: AbortSignal | undefined,
-): Promise<{ items: RecallItem[]; scanned: number; budget: number }> {
+): Promise<{ items: RecallItem[]; scanned: number; budget: number; truncated: boolean }> {
   const all = await engine.listSessions(signal)
-  const scoped = !wantAll && agentCwd != null ? all.filter((record) => record.header.cwd === agentCwd) : all
+  const scoped = !wantAll && agentCwd != null
+    ? all.filter((record) => normalizeCwdPath(record.header.cwd ?? '') === normalizeCwdPath(agentCwd))
+    : all
   const candidates = scoped.filter((record) => cwdAllowed(record.header.cwd, cfg))
+  // Newest sessions first: a capped scan budget must not be spent on whatever
+  // order listSessions happened to return while this week's sessions go
+  // unscanned. Stable sort — equal timestamps keep the backend order.
+  candidates.sort((a, b) => createdAtOf(b) - createdAtOf(a))
   const page = candidates.slice(0, scanMax)
+  const { filters, highlight } = cjkTextFilters(query)
   const items: RecallItem[] = []
-  for (const record of page) {
-    if (items.length >= limit) break
-    const { filters, highlight } = cjkTextFilters(query)
-    const docs = await engine.filterEvents(record.header.id, filters)
-    if (docs.length === 0) continue
-    const doc = docs[0]
-    if (doc === undefined) continue
-    items.push({
-      sessionId: record.header.id,
-      id8: id8(record.header.id),
-      title: null,
-      createdAt: record.header.createdAt,
-      cwd: record.header.cwd ?? null,
-      live: record.live,
-      persisted: record.persisted,
-      artifactPath: null,
-      bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
-    })
+  for (let i = 0; i < page.length; i += CJK_SCAN_CONCURRENCY) {
+    const chunk = page.slice(i, i + CJK_SCAN_CONCURRENCY)
+    const probed = await Promise.all(chunk.map(async (record) => ({
+      record,
+      docs: await engine.filterEvents(record.header.id, filters),
+    })))
+    for (const { record, docs } of probed) {
+      const doc = docs[0]
+      if (doc === undefined) continue
+      items.push({
+        sessionId: record.header.id,
+        id8: id8(record.header.id),
+        title: null,
+        createdAt: record.header.createdAt,
+        cwd: record.header.cwd ?? null,
+        live: record.live,
+        persisted: record.persisted,
+        artifactPath: null,
+        bestMatch: { seq: doc.seq, type: doc.type, time: doc.time, snippet: snippetAround(doc.text, highlight, CJK_SNIPPET_CHARS) },
+      })
+    }
   }
-  return { items, scanned: page.length, budget: scanMax }
+  return { items: items.slice(0, limit), scanned: page.length, budget: scanMax, truncated: items.length > limit }
 }
 
 const nullableString = { oneOf: [{ type: 'string' }, { type: 'null' }] } as const
@@ -335,6 +359,7 @@ const recallOutputSchema = {
             source: { type: 'string', enum: ['fts', 'cjk-fallback', 'session-scan', 'raw-scan'] },
             scanned: { type: 'integer' },
             scanBudget: { type: 'integer' },
+            truncated: { type: 'boolean' },
             ranked: { type: 'boolean' },
           },
         },
@@ -419,17 +444,25 @@ export function createRecallTool(
       if (query === '') return recallError(query, Object.assign(new Error('empty query'), { code: 'SESSION_QUERY_INVALID_QUERY' }))
 
       const limit = clamp(Math.trunc(args.limit ?? cfg.defaultLimit), 1, cfg.maxLimit)
-      const agentCwd = exec.agent?.session.header?.cwd ?? null
+      const rawAgentCwd = exec.agent?.session.header?.cwd ?? null
+      // Normalized once so every downstream comparison (cwd policy, scan
+      // scoping, the backend session filter, the reported scope) sees the
+      // same canonical path shape.
+      const agentCwd = rawAgentCwd != null && rawAgentCwd !== '' ? normalizeCwdPath(rawAgentCwd) : rawAgentCwd
       const callerSessionId = exec.agent?.session?.id
 
       // ── caller authorization: restrict to the calling agent's lineage tree ──
       let allowedIds: Set<string> | null = null
+      let lineageTraceFailed = false
       if (cfg.callerTreeOnly && callerSessionId != null) {
         try {
           const trace = await engine.traceSession(brandSessionId(callerSessionId), exec.signal)
           allowedIds = collectLineageIds(trace)
         } catch {
-          // Degrade: if lineage tracing fails, allow everything (fail-open).
+          // 'open' (the default): degrade to allowing everything — the
+          // pre-0.8.3 fail-open behavior. 'closed': remember the failure and
+          // refuse the results below instead of risking over-broad access.
+          lineageTraceFailed = cfg.lineageFailurePolicy === 'closed'
         }
       }
 
@@ -457,6 +490,20 @@ export function createRecallTool(
           items: [],
           nextCursor: null,
           hint: 'the current project directory is excluded by the recall scope policy (cwd allowlist/denylist). Ask the user to adjust the plugin configuration if this is unexpected.',
+          redacted: 0,
+          diagnostics: null,
+        }
+      }
+
+      if (lineageTraceFailed) {
+        return {
+          query,
+          scope,
+          count: 0,
+          hasMore: false,
+          items: [],
+          nextCursor: null,
+          hint: "lineage tracing failed and this deployment runs lineageFailurePolicy: 'closed', so the results were refused (fail-closed). Retry the call; if it keeps failing, ask the user to set lineageFailurePolicy: 'open' (the default) or callerTreeOnly: false.",
           redacted: 0,
           diagnostics: null,
         }
@@ -556,7 +603,7 @@ export function createRecallTool(
               .map((item) => ({ ...item, title: scanTitles.get(item.sessionId) ?? null })),
             rankingOptions,
           )
-          diagnostics = { source: 'cjk-fallback', scanned: scan.scanned, scanBudget: scan.budget, ranked }
+          diagnostics = { source: 'cjk-fallback', scanned: scan.scanned, scanBudget: scan.budget, ranked, truncated: scan.truncated }
           hint = items.length > 0 ? cjkFallbackHint(items.length, cfg.cjkHint) : cjkZeroHitHint(query, true, cfg.cjkHint)
         } else if (items.length === 0) {
           hint = cjkZeroHitHint(query, true, cfg.cjkHint)
